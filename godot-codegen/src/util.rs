@@ -241,37 +241,8 @@ pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
     unique_ords.sort();
     unique_ords.dedup();
 
-    let mut derives = vec!["Copy", "Clone", "Eq", "PartialEq", "Hash", "Debug"];
-
-    if enum_.is_bitfield {
-        derives.push("Default");
-    }
-
-    let derives = derives.into_iter().map(ident);
-
-    let index_enum_impl = if enum_.is_bitfield {
-        // Bitfields don't implement IndexEnum.
-        TokenStream::new()
-    } else {
-        // Enums implement IndexEnum only if they are "index-like" (see docs).
-        if let Some(enum_max) = try_count_index_enum(enum_) {
-            quote! {
-                impl crate::obj::IndexEnum for #enum_name {
-                    const ENUMERATOR_COUNT: usize = #enum_max;
-                }
-            }
-        } else {
-            TokenStream::new()
-        }
-    };
-
-    let bitfield_ops;
-    let self_as_trait;
-    let engine_impl;
-    let enum_ord_type;
-
-    if enum_.is_bitfield {
-        bitfield_ops = quote! {
+    let bitfield_ops = if enum_.is_bitfield {
+        let tokens = quote! {
             // impl #enum_name {
             //     pub const UNSET: Self = Self { ord: 0 };
             // }
@@ -283,85 +254,97 @@ pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
                 }
             }
         };
-        enum_ord_type = quote! { u64 };
-        self_as_trait = quote! { <Self as crate::obj::EngineBitfield> };
-        engine_impl = quote! {
-            impl crate::obj::EngineBitfield for #enum_name {
-                fn try_from_ord(ord: u64) -> Option<Self> {
-                    Some(Self { ord })
-                }
 
-                fn ord(self) -> u64 {
-                    self.ord
-                }
-            }
-        };
+        Some(tokens)
     } else {
-        bitfield_ops = TokenStream::new();
-        enum_ord_type = quote! { i32 };
-        self_as_trait = quote! { <Self as crate::obj::EngineEnum> };
-        engine_impl = quote! {
-            impl crate::obj::EngineEnum for #enum_name {
-                // fn try_from_ord(ord: i32) -> Option<Self> {
-                //     match ord {
-                //         #(
-                //             #matches
-                //         )*
-                //         _ => None,
-                //     }
-                // }
+        None
+    };
 
-                fn try_from_ord(ord: i32) -> Option<Self> {
-                    match ord {
-                        #( ord @ #unique_ords )|* => Some(Self { ord }),
-                        _ => None,
-                    }
-                }
-
-                fn ord(self) -> i32 {
-                    self.ord
+    let try_from_ord = if enum_.is_bitfield {
+        quote! {
+            fn try_from_ord(ord: i32) -> Option<Self> {
+                Some(Self { ord })
+            }
+        }
+    } else {
+        quote! {
+            fn try_from_ord(ord: i32) -> Option<Self> {
+                match ord {
+                    #( ord @ #unique_ords )|* => Some(Self { ord }),
+                    _ => None,
                 }
             }
-        };
+        }
     };
+
+    let mut derives = vec!["Copy", "Clone", "Eq", "PartialEq", "Debug", "Hash"];
+
+    if enum_.is_bitfield {
+        derives.push("Default");
+    }
+
+    let index_enum_impl = if let Some(enum_max) = try_count_index_enum(enum_) {
+        quote! {
+            impl crate::obj::IndexEnum for #enum_name {
+                const ENUMERATOR_COUNT: usize = #enum_max;
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+
+    let derives = derives.into_iter().map(ident);
 
     // Enumerator ordinal stored as i32, since that's enough to hold all current values and the default repr in C++.
     // Public interface is i64 though, for consistency (and possibly forward compatibility?).
-    // Bitfield ordinals are stored as u64. See also: https://github.com/godotengine/godot-cpp/pull/1320
+    // TODO maybe generalize GodotFfi over EngineEnum trait
     quote! {
         #[repr(transparent)]
         #[derive(#( #derives ),*)]
         pub struct #enum_name {
-            ord: #enum_ord_type
+            ord: i32
         }
         impl #enum_name {
             #(
                 #enumerators
             )*
         }
+        impl crate::obj::EngineEnum for #enum_name {
+            // fn try_from_ord(ord: i32) -> Option<Self> {
+            //     match ord {
+            //         #(
+            //             #matches
+            //         )*
+            //         _ => None,
+            //     }
+            // }
 
-        #engine_impl
+            #try_from_ord
 
-        #bitfield_ops
-
+            fn ord(self) -> i32 {
+                self.ord
+            }
+        }
         #index_enum_impl
 
         impl crate::builtin::meta::GodotConvert for #enum_name {
-            type Via = #enum_ord_type;
+            type Via = i32;
         }
 
         impl crate::builtin::meta::ToGodot for #enum_name {
             fn to_godot(&self) -> Self::Via {
-                #self_as_trait::ord(*self)
+                <Self as crate::obj::EngineEnum>::ord(*self)
             }
         }
 
         impl crate::builtin::meta::FromGodot for #enum_name {
             fn try_from_godot(via: Self::Via) -> std::result::Result<Self, crate::builtin::meta::ConvertError> {
-                #self_as_trait::try_from_ord(via)
+                <Self as crate::obj::EngineEnum>::try_from_ord(via)
                     .ok_or_else(|| crate::builtin::meta::FromGodotError::InvalidEnum.into_error(via))
             }
         }
+
+        #bitfield_ops
     }
 }
 
@@ -687,28 +670,11 @@ fn to_rust_type_uncached(full_ty: &GodotTy, ctx: &mut Context) -> RustTy {
         };
     }
 
-    if let Some(bitfield) = ty.strip_prefix("bitfield::") {
-        return if let Some((class, enum_)) = bitfield.split_once('.') {
-            // Class-local bitfield.
-            let module = ModName::from_godot(class);
-            let bitfield_ty = make_enum_name(enum_);
+    let qualified_enum = ty
+        .strip_prefix("enum::")
+        .or_else(|| ty.strip_prefix("bitfield::"));
 
-            RustTy::EngineBitfield {
-                tokens: quote! { crate::engine::#module::#bitfield_ty},
-                surrounding_class: Some(class.to_string()),
-            }
-        } else {
-            // Global bitfield.
-            let bitfield_ty = make_enum_name(bitfield);
-
-            RustTy::EngineBitfield {
-                tokens: quote! { crate::engine::global::#bitfield_ty },
-                surrounding_class: None,
-            }
-        };
-    }
-
-    if let Some(qualified_enum) = ty.strip_prefix("enum::") {
+    if let Some(qualified_enum) = qualified_enum {
         return if let Some((class, enum_)) = qualified_enum.split_once('.') {
             // Class-local enum
             let module = ModName::from_godot(class);
@@ -833,7 +799,6 @@ fn to_rust_expr_inner(expr: &str, ty: &RustTy, is_inner: bool) -> TokenStream {
     if let Ok(num) = expr.parse::<i64>() {
         let lit = Literal::i64_unsuffixed(num);
         return match ty {
-            RustTy::EngineBitfield { .. } => quote! { crate::obj::EngineBitfield::from_ord(#lit) },
             RustTy::EngineEnum { .. } => quote! { crate::obj::EngineEnum::from_ord(#lit) },
             RustTy::BuiltinIdent(ident) if ident == "Variant" => quote! { Variant::from(#lit) },
             RustTy::BuiltinIdent(ident)
@@ -983,12 +948,6 @@ fn gdscript_to_rust_expr() {
     };
     let ty_enum = Some(&ty_enum);
 
-    let ty_bitfield = RustTy::EngineBitfield {
-        tokens: quote! { SomeEnum },
-        surrounding_class: None,
-    };
-    let ty_bitfield = Some(&ty_bitfield);
-
     let ty_variant = RustTy::BuiltinIdent(ident("Variant"));
     let ty_variant = Some(&ty_variant);
 
@@ -1037,9 +996,6 @@ fn gdscript_to_rust_expr() {
 
         // enum (from int)
         ("7",                                              ty_enum,            quote! { crate::obj::EngineEnum::from_ord(7) }),
-
-        // bitfield (from int)
-        ("7",                                              ty_bitfield,        quote! { crate::obj::EngineBitfield::from_ord(7) }),
 
         // Variant (from int)
         ("8",                                              ty_variant,         quote! { Variant::from(8) }),

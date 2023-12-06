@@ -248,7 +248,6 @@ pub struct PropertyInfo {
 impl PropertyInfo {
     /// Converts to the FFI type. Keep this object allocated while using that!
     pub fn property_sys(&self) -> sys::GDExtensionPropertyInfo {
-        use crate::obj::EngineBitfield as _;
         use crate::obj::EngineEnum as _;
 
         sys::GDExtensionPropertyInfo {
@@ -262,7 +261,6 @@ impl PropertyInfo {
     }
 
     pub fn empty_sys() -> sys::GDExtensionPropertyInfo {
-        use crate::obj::EngineBitfield as _;
         use crate::obj::EngineEnum as _;
 
         sys::GDExtensionPropertyInfo {
