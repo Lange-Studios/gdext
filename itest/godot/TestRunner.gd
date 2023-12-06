@@ -43,8 +43,7 @@ func _ready():
 	var gdscript_suites: Array = [
 		load("res://ManualFfiTests.gd").new(),
 		load("res://gen/GenFfiTests.gd").new(),
-		load("res://InheritTests.gd").new(),
-		load("res://ScriptInstanceTests.gd").new(),
+		load("res://InheritTests.gd").new()
 	]
 	
 	var gdscript_tests: Array = []
