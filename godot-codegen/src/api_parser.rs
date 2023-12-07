@@ -124,6 +124,10 @@ pub struct EnumConstant {
 
 impl EnumConstant {
     pub fn to_enum_ord(&self) -> i32 {
+        if self.value == u32::MAX.into() {
+            return -1;
+        }
+
         self.value.try_into().unwrap_or_else(|_| {
             panic!(
                 "enum value {} = {} is out of range for i32, please report this",
@@ -142,6 +146,10 @@ impl EnumConstant {
     }
 
     pub fn to_constant(&self) -> i32 {
+        if self.value == u32::MAX.into() {
+            return -1;
+        }
+
         self.value.try_into().unwrap_or_else(|_| {
             panic!(
                 "constant {} = {} is out of range for i32, please report this",
