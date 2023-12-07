@@ -6,7 +6,7 @@
  */
 
 use crate::api_parser::{
-    BuiltinClassMethod, Class, ClassConstant, ClassMethod, Enum, UtilityFunction,
+    BuiltinClassMethod, Class, ClassConstant, ClassMethod, Enum, NumType, UtilityFunction,
 };
 use crate::special_cases::is_builtin_scalar;
 use crate::{Context, GodotTy, ModName, RustTy, TyName};
@@ -360,17 +360,17 @@ pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
 
 pub fn make_constant_definition(constant: &ClassConstant) -> TokenStream {
     let name = ident(&constant.name);
-    let value = constant.to_constant();
-
-    if constant.name.starts_with("NOTIFICATION_") {
-        // Already exposed through enums
-        quote! {
-            pub(crate) const #name: i32 = #value;
-        }
+    let visibility = if constant.name.starts_with("NOTIFICATION_") {
+        quote!(pub(crate))
     } else {
-        quote! {
-            pub const #name: i32 = #value;
-        }
+        quote!(pub)
+    };
+
+    match constant.to_constant() {
+        NumType::I32(value) => quote!(#visibility const #name: i32 = #value;),
+        NumType::U32(value) => quote!(#visibility const #name: u32 = #value;),
+        NumType::I64(value) => quote!(#visibility const #name: i64 = #value;),
+        NumType::U64(value) => quote!(#visibility const #name: u64 = #value;),
     }
 }
 
