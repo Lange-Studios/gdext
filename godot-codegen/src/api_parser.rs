@@ -126,7 +126,6 @@ pub enum NumType {
     I32(i32),
     U32(u32),
     I64(i64),
-    U64(u64),
 }
 
 impl EnumConstant {
@@ -153,15 +152,8 @@ impl EnumConstant {
             NumType::I32(value)
         } else if let Ok(value) = u32::try_from(self.value) {
             NumType::U32(value)
-        } else if let Ok(value) = i64::try_from(self.value) {
-            NumType::I64(value)
-        } else if let Ok(value) = u64::try_from(self.value) {
-            NumType::U64(value)
         } else {
-            panic!(
-                "constant {} = {} is out of range for i32, u32, i64, and u64.  Please report this",
-                self.name, self.value
-            )
+            NumType::I64(self.value)
         }
     }
 }

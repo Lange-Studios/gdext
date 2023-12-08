@@ -370,7 +370,6 @@ pub fn make_constant_definition(constant: &ClassConstant) -> TokenStream {
         NumType::I32(value) => quote!(#visibility const #name: i32 = #value;),
         NumType::U32(value) => quote!(#visibility const #name: u32 = #value;),
         NumType::I64(value) => quote!(#visibility const #name: i64 = #value;),
-        NumType::U64(value) => quote!(#visibility const #name: u64 = #value;),
     }
 }
 
