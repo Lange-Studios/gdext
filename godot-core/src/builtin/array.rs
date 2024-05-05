@@ -88,7 +88,6 @@ impl_builtin_froms!(VariantArray;
     PackedStringArray => array_from_packed_string_array,
     PackedVector2Array => array_from_packed_vector2_array,
     PackedVector3Array => array_from_packed_vector3_array,
-    PackedVector4Array => array_from_packed_vector4_array,
 );
 
 impl<T: ArrayElement> Array<T> {
