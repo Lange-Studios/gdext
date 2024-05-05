@@ -69,6 +69,8 @@ mod sealed {
     impl Sealed for PackedStringArray {}
     impl Sealed for PackedVector2Array {}
     impl Sealed for PackedVector3Array {}
+    #[cfg(since_api = "4.3")]
+    impl Sealed for PackedVector4Array {}
     impl Sealed for PackedColorArray {}
     impl Sealed for Plane {}
     impl Sealed for Projection {}
@@ -251,6 +253,11 @@ where
 /// Notable differences are:
 /// - Only `VariantArray`, not `Array<T>` is allowed (typed arrays cannot be nested).
 /// - `Option` is only supported for `Option<Gd<T>>`, but not e.g. `Option<i32>`.
+#[diagnostic::on_unimplemented(
+    message = "`Array<T>` can only store element types supported in Godot arrays (no nesting).",
+    label = "does not implement `Var`",
+    note = "see also: https://godot-rust.github.io/docs/gdext/master/godot/builtin/meta/trait.ArrayElement.html"
+)]
 pub trait ArrayElement: GodotType {}
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------

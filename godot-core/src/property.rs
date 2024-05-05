@@ -21,6 +21,14 @@ use crate::engine::global::PropertyHint;
 ///
 /// This does not require [`FromGodot`] or [`ToGodot`], so that something can be used as a property even if it can't be used in function
 /// arguments/return types.
+
+// We also mention #[export] here, because we can't control the order of error messages. Missing Export often also means missing Var trait,
+// and so the Var error message appears first.
+#[diagnostic::on_unimplemented(
+    message = "`#[var]` properties require `Var` trait; #[export] ones require `Export` trait",
+    label = "type cannot be used as a property",
+    note = "see also: https://godot-rust.github.io/book/register/properties.html"
+)]
 pub trait Var: GodotConvert {
     fn get_property(&self) -> Self::Via;
     fn set_property(&mut self, value: Self::Via);
@@ -31,6 +39,12 @@ pub trait Var: GodotConvert {
 }
 
 /// Trait implemented for types that can be used as `#[export]` fields.
+// Mentioning both Var + Export: see above.
+#[diagnostic::on_unimplemented(
+    message = "`#[var]` properties require `Var` trait; #[export] ones require `Export` trait",
+    label = "type cannot be used as a property",
+    note = "see also: https://godot-rust.github.io/book/register/properties.html"
+)]
 pub trait Export: Var {
     /// The export info to use for an exported field of this type, if no other export info is specified.
     fn default_export_info() -> PropertyHintInfo;
@@ -351,7 +365,7 @@ mod export_impls {
         (@type_string_hint $Ty:ty) => {
             impl TypeStringHint for $Ty {
                 fn type_string() -> String {
-                    use sys::GodotFfi;
+                    use sys::GodotFfi as _;
                     let variant_type = <$Ty as $crate::builtin::meta::GodotType>::Ffi::variant_type();
                     let type_name = <$Ty as $crate::builtin::meta::GodotType>::godot_type_name();
                     format!("{}:{}", variant_type as i32, type_name)
@@ -400,6 +414,8 @@ mod export_impls {
     impl_property_by_godot_convert!(PackedStringArray, no_export);
     impl_property_by_godot_convert!(PackedVector2Array, no_export);
     impl_property_by_godot_convert!(PackedVector3Array, no_export);
+    #[cfg(since_api = "4.3")]
+    impl_property_by_godot_convert!(PackedVector4Array, no_export);
     impl_property_by_godot_convert!(PackedColorArray, no_export);
 
     // Primitives
