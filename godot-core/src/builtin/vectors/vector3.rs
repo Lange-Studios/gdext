@@ -9,7 +9,6 @@ use godot_ffi as sys;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{FloatExt, GlamConv, GlamType};
-use crate::builtin::meta::impl_godot_as_self;
 use crate::builtin::vectors::Vector3Axis;
 use crate::builtin::{real, Basis, RVec3, Vector3i};
 
@@ -205,7 +204,7 @@ impl Vector3 {
 
     pub fn signed_angle_to(self, to: Self, axis: Self) -> real {
         let cross_to = self.cross(to);
-        let unsigned_angle = self.dot(to).atan2(cross_to.length());
+        let unsigned_angle = cross_to.length().atan2(self.dot(to));
         let sign = cross_to.dot(axis);
         if sign < 0.0 {
             -unsigned_angle
@@ -276,19 +275,19 @@ impl_common_vector_fns!(Vector3, real);
 impl_float_vector_glam_fns!(Vector3, real);
 impl_float_vector_component_fns!(Vector3, real, (x, y, z));
 impl_vector_operators!(Vector3, real, (x, y, z));
-impl_from_tuple_for_vector3x!(Vector3, real);
+impl_swizzle_trait_for_vector3x!(Vector3, real);
 
 // SAFETY:
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Vector3 {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Vector3
+        sys::VariantType::VECTOR3
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Vector3);
+crate::meta::impl_godot_as_self!(Vector3);
 
 impl GlamType for RVec3 {
     type Mapped = Vector3;

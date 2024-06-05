@@ -13,12 +13,11 @@ codegen-fmt = []
 codegen-full = []
 codegen-lazy-fptrs = []
 double-precision = []
-custom-godot = ["godot-bindings/custom-godot"]
+api-custom = ["godot-bindings/api-custom"]
 experimental-godot-api = []
 
 [dependencies]
 godot-bindings = { path = "../godot-bindings" }
-godot-fmt = { path = "../godot-fmt" }
 
 heck = "0.4"
 nanoserde = "0.1.35"
@@ -33,3 +32,23 @@ regex = { version = "1.5.5", default-features = false, features = ["std", "unico
 
 [build-dependencies]
 godot-bindings = { path = "../godot-bindings" } # emit_godot_version_cfg
+
+# https://docs.rs/about/metadata
+[package.metadata.docs.rs]
+features = ["experimental-godot-api"]
+rustdoc-args = ["--cfg", "published_docs"]
+
+# Currently causes "unused manifest key" warnings. Maybe re-enable in the future, to make `published_docs` known.
+#[lints.rust]
+#unexpected_cfgs = { level = "warn", check-cfg = ['cfg(published_docs)'] }
+
+# To check formatter: Disabled below, since it pulls in too many dependencies during `cargo test` but is not really used.
+# Dev-dependencies cannot be optional and feature-gated. Enable manually when needed.
+
+#[[bench]]
+#name = "gdext_fmt_bench"
+#harness = false
+#
+#[dev-dependencies]
+#criterion = "0.5"
+

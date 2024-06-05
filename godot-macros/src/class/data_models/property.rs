@@ -26,9 +26,6 @@ pub enum FieldHint {
         hint: Ident,
         hint_string: TokenStream,
     },
-
-    /// The hint and hint string are given by a token stream returning an `PropertyHintInfo` struct.
-    HintFromExportFunction(TokenStream),
 }
 
 impl FieldHint {
@@ -76,12 +73,14 @@ pub fn make_property_impl(class_name: &Ident, fields: &Fields) -> TokenStream {
         let FieldVar {
             getter,
             setter,
-            mut hint,
+            hint,
             mut usage_flags,
         } = var;
 
+        let mut export_hint = None;
+
         if let Some(export) = export {
-            hint = export.to_field_hint();
+            export_hint = export.to_export_hint();
 
             if usage_flags.is_inferred() {
                 usage_flags = UsageFlags::InferredExport;
@@ -90,21 +89,28 @@ pub fn make_property_impl(class_name: &Ident, fields: &Fields) -> TokenStream {
 
         let usage_flags = match usage_flags {
             UsageFlags::Inferred => {
-                quote! { ::godot::engine::global::PropertyUsageFlags::NONE }
+                quote! { ::godot::global::PropertyUsageFlags::NONE }
             }
             UsageFlags::InferredExport => {
-                quote! { ::godot::engine::global::PropertyUsageFlags::DEFAULT }
+                quote! { ::godot::global::PropertyUsageFlags::DEFAULT }
             }
             UsageFlags::Custom(flags) => quote! {
                 #(
-                    ::godot::engine::global::PropertyUsageFlags::#flags
+                    ::godot::global::PropertyUsageFlags::#flags
                 )|*
             },
         };
 
         let hint = match hint {
             FieldHint::Inferred => {
-                if export.is_some() {
+                if let Some(export_hint) = export_hint {
+                    quote! {
+                        {
+                            let ::godot::register::property::PropertyHintInfo { hint, hint_string } = #export_hint;
+                            (hint, hint_string)
+                        }
+                    }
+                } else if export.is_some() {
                     quote! {
                         {
                             let default_export_info = <#field_type as ::godot::register::property::Export>::default_export_info();
@@ -120,23 +126,25 @@ pub fn make_property_impl(class_name: &Ident, fields: &Fields) -> TokenStream {
                     }
                 }
             }
-            FieldHint::Hint(hint) => quote! {
-                (
-                    ::godot::engine::global::PropertyHint::#hint,
-                    ::godot::builtin::GString::new()
-                )
-            },
+            FieldHint::Hint(hint) => {
+                let hint_string = if let Some(export_hint) = export_hint {
+                    quote! { #export_hint.hint_string }
+                } else {
+                    quote! { :godot::builtin::GString::new() }
+                };
+
+                quote! {
+                    (
+                        ::godot::global::PropertyHint::#hint,
+                        #hint_string
+                    )
+                }
+            }
             FieldHint::HintWithString { hint, hint_string } => quote! {
                 (
-                    ::godot::engine::global::PropertyHint::#hint,
+                    ::godot::global::PropertyHint::#hint,
                     ::godot::builtin::GString::from(#hint_string)
                 )
-            },
-            FieldHint::HintFromExportFunction(expression) => quote! {
-                {
-                    let ::godot::register::property::PropertyHintInfo { hint, hint_string } = #expression;
-                    (hint, hint_string)
-                }
             },
         };
 
@@ -157,7 +165,7 @@ pub fn make_property_impl(class_name: &Ident, fields: &Fields) -> TokenStream {
             let (hint, hint_string) = #hint;
             let usage = #usage_flags;
 
-            let property_info = ::godot::builtin::meta::PropertyInfo {
+            let property_info = ::godot::meta::PropertyInfo {
                 variant_type: #field_variant_type,
                 class_name: #field_class_name,
                 property_name: #field_name.into(),

@@ -6,9 +6,9 @@
  */
 
 use crate::builder::ClassBuilder;
-use crate::builtin::meta::ClassName;
 use crate::builtin::GString;
 use crate::init::InitLevel;
+use crate::meta::ClassName;
 use crate::obj::{bounds, Base, BaseMut, BaseRef, Bounds, Gd};
 use crate::storage::Storage;
 
@@ -61,7 +61,7 @@ where
 
 /// Type representing the absence of a base class, at the root of the hierarchy.
 ///
-/// `NoBase` is used as the base class for exactly one class: [`Object`][crate::engine::Object].
+/// `NoBase` is used as the base class for exactly one class: [`Object`][crate::classes::Object].
 ///
 /// This is an enum without any variants, as we should never construct an instance of this class.
 pub enum NoBase {}
@@ -137,6 +137,7 @@ pub unsafe trait Inherits<Base: GodotClass>: GodotClass {}
 unsafe impl<T: GodotClass> Inherits<T> for T {}
 
 /// Implemented for all user-defined classes, providing extensions on the raw object to interact with `Gd`.
+#[doc(hidden)]
 pub trait UserClass: Bounds<Declarer = bounds::DeclUser> {
     #[doc(hidden)]
     fn __config() -> crate::private::ClassConfig;
@@ -207,9 +208,27 @@ pub trait IndexEnum: EngineEnum {
     }
 }
 
-/// Trait that's implemented for user-defined classes that provide a `Base<T>` field.
+/// Trait that is automatically implemented for user classes containing a `Base<T>` field.
 ///
-/// Gives direct access to the containing `Gd<Self>` from `Self`.
+/// Gives direct access to the containing `Gd<Self>` from `self`.
+///
+/// # Usage as a bound
+///
+/// In order to call `base()` or `base_mut()` within a function or on a type you define, you need a `WithBaseField<Base = T>` bound,
+/// where `T` is the base class of your type.
+///
+/// ```no_run
+/// # use godot::prelude::*;
+/// # use godot::obj::WithBaseField;
+/// fn some_fn<T>(value: &T)
+/// where
+///     T: WithBaseField<Base = Node3D>,
+/// {
+///     let base = value.base();
+///     let pos = base.get_position();
+/// }
+/// ```
+///
 // Possible alternative for builder APIs, although even less ergonomic: Base<T> could be Base<T, Self> and return Gd<Self>.
 #[diagnostic::on_unimplemented(
     message = "Class `{Self}` requires a `Base<T>` field",
@@ -255,7 +274,7 @@ pub trait WithBaseField: GodotClass + Bounds<Declarer = bounds::DeclUser> {
     /// ```
     ///
     /// However, we cannot call methods that require `&mut Base`, such as
-    /// [`Node::add_child()`](crate::engine::Node::add_child).
+    /// [`Node::add_child()`](crate::classes::Node::add_child).
     ///
     /// ```compile_fail
     /// use godot::prelude::*;
@@ -502,6 +521,18 @@ pub mod cap {
     pub trait GodotSet: GodotClass {
         #[doc(hidden)]
         fn __godot_set_property(&mut self, property: StringName, value: Variant) -> bool;
+    }
+
+    #[doc(hidden)]
+    pub trait GodotGetPropertyList: GodotClass {
+        #[doc(hidden)]
+        fn __godot_get_property_list(&mut self) -> Vec<crate::meta::PropertyInfo>;
+    }
+
+    #[doc(hidden)]
+    pub trait GodotPropertyGetRevert: GodotClass {
+        #[doc(hidden)]
+        fn __godot_property_get_revert(&self, property: StringName) -> Option<Variant>;
     }
 
     /// Auto-implemented for `#[godot_api] impl MyClass` blocks

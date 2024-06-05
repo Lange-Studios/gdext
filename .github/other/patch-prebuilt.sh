@@ -9,9 +9,20 @@
 
 version="$1"
 
-cat << HEREDOC >> Cargo.toml
-[patch."https://github.com/godot-rust/godot4-prebuilt"]
-godot4-prebuilt = { git = "https://github.com//godot-rust/godot4-prebuilt", branch = "$version" }
-HEREDOC
+# Add correct feature to `godot` dependency.
+if [[ "$version" == "nightly" ]]; then
+  # Do not use extraFeatures="api-custom" here. They just want to use nightly Godot with current API.
+  extraFeatures=""
+else
+  # Extract "major.minor" from "major.minor[.patch]" -- disabled.
+  #  dashedVersion=$(echo "$version" | cut -d '.' -f 1,2 | sed 's/\./-/')
 
-echo "Patched Cargo.toml for version $version."
+  # Convert . to - for feature name.
+  dashedVersion="${version//./-}"
+  extraFeatures=", \"api-$dashedVersion\""
+fi
+
+# Add extra features to the godot dependency (expects existing `features` key).
+sed -i "/^godot = /s/\(features = \[\([^]]*\)\)\]/\1$extraFeatures]/g" itest/rust/Cargo.toml
+
+echo "Patched Cargo.toml for version $version$extraFeatures."

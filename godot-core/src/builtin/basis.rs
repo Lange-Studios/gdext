@@ -10,13 +10,10 @@ use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{ApproxEq, FloatExt, GlamConv, GlamType};
 use crate::builtin::real_consts::FRAC_PI_2;
-use crate::builtin::{real, Quaternion, RMat3, RQuat, RVec2, RVec3, Vector3};
-
+use crate::builtin::{real, EulerOrder, Quaternion, RMat3, RQuat, RVec2, RVec3, Vector3};
 use std::cmp::Ordering;
 use std::fmt::Display;
 use std::ops::{Mul, MulAssign};
-
-use super::meta::impl_godot_as_self;
 
 /// A 3x3 matrix, typically used as an orthogonal basis for [`Transform3D`](crate::builtin::Transform3D).
 ///
@@ -322,6 +319,7 @@ impl Basis {
         ))
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn to_euler_inner(major: real, pair0: RVec2, pair1: RVec2, pair2: RVec2) -> RVec3 {
         match Self::is_between_neg1_1(major) {
             // It's -1
@@ -598,26 +596,13 @@ impl Mul<Vector3> for Basis {
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Basis {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Basis
+        sys::VariantType::BASIS
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Basis);
-
-/// The ordering used to interpret a set of euler angles as extrinsic
-/// rotations.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-#[repr(C)]
-pub enum EulerOrder {
-    XYZ = 0,
-    XZY = 1,
-    YXZ = 2,
-    YZX = 3,
-    ZXY = 4,
-    ZYX = 5,
-}
+crate::meta::impl_godot_as_self!(Basis);
 
 #[cfg(test)]
 mod test {

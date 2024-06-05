@@ -8,8 +8,8 @@
 use crate::framework::itest;
 
 use godot::builtin::inner::InnerTransform2D;
-use godot::builtin::meta::ToGodot;
 use godot::builtin::{real, RealConv, Rect2, Transform2D, VariantOperator, Vector2};
+use godot::meta::ToGodot;
 use godot::private::class_macros::assert_eq_approx;
 
 const TEST_TRANSFORM: Transform2D = Transform2D::from_cols(
@@ -65,7 +65,7 @@ fn transform2d_xform_equiv() {
         TEST_TRANSFORM * vec,
         TEST_TRANSFORM
             .to_variant()
-            .evaluate(&vec.to_variant(), VariantOperator::Multiply)
+            .evaluate(&vec.to_variant(), VariantOperator::MULTIPLY)
             .unwrap()
             .to::<Vector2>(),
         "operator: Transform2D * Vector2"
@@ -77,7 +77,7 @@ fn transform2d_xform_equiv() {
         TEST_TRANSFORM * rect_2,
         TEST_TRANSFORM
             .to_variant()
-            .evaluate(&rect_2.to_variant(), VariantOperator::Multiply)
+            .evaluate(&rect_2.to_variant(), VariantOperator::MULTIPLY)
             .unwrap()
             .to::<Rect2>(),
         "operator: Transform2D * Rect2 (1)"
@@ -88,7 +88,7 @@ fn transform2d_xform_equiv() {
         TEST_TRANSFORM
             .rotated(0.8)
             .to_variant()
-            .evaluate(&rect_2.to_variant(), VariantOperator::Multiply)
+            .evaluate(&rect_2.to_variant(), VariantOperator::MULTIPLY)
             .unwrap()
             .to::<Rect2>(),
         "operator: Transform2D * Rect2 (2)"

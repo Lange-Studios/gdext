@@ -15,8 +15,6 @@ use crate::builtin::{real, RAffine2, RMat2, Rect2, Vector2};
 use std::fmt::Display;
 use std::ops::{Mul, MulAssign};
 
-use super::meta::impl_godot_as_self;
-
 /// Affine 2D transform (2x3 matrix).
 ///
 /// Represents transformations such as translation, rotation, or scaling.
@@ -379,13 +377,13 @@ impl GlamConv for Transform2D {
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Transform2D {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Transform2D
+        sys::VariantType::TRANSFORM2D
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Transform2D);
+crate::meta::impl_godot_as_self!(Transform2D);
 
 /// A 2x2 matrix, typically used as an orthogonal basis for [`Transform2D`].
 ///

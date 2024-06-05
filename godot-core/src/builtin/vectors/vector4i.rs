@@ -9,7 +9,6 @@ use godot_ffi as sys;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{FloatExt, GlamConv, GlamType};
-use crate::builtin::meta::impl_godot_as_self;
 use crate::builtin::{real, RVec4, Vector4, Vector4Axis};
 
 use std::fmt;
@@ -43,7 +42,7 @@ impl_vector_operators!(Vector4i, i32, (x, y, z, w));
 impl_integer_vector_glam_fns!(Vector4i, real);
 impl_integer_vector_component_fns!(Vector4i, real, (x, y, z, w));
 impl_common_vector_fns!(Vector4i, i32);
-impl_from_tuple_for_vector4x!(Vector4i, i32);
+impl_swizzle_trait_for_vector4x!(Vector4i, i32);
 
 impl Vector4i {
     /// Returns a `Vector4i` with the given components.
@@ -151,13 +150,13 @@ impl fmt::Display for Vector4i {
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Vector4i {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Vector4i
+        sys::VariantType::VECTOR4I
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Vector4i);
+crate::meta::impl_godot_as_self!(Vector4i);
 
 impl GlamType for glam::IVec4 {
     type Mapped = Vector4i;

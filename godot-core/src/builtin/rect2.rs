@@ -9,9 +9,7 @@ use godot_ffi as sys;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::ApproxEq;
-use crate::builtin::{real, Rect2i, RectSide, Vector2};
-
-use super::meta::impl_godot_as_self;
+use crate::builtin::{real, Rect2i, Side, Vector2};
 
 /// 2D axis-aligned bounding box.
 ///
@@ -147,12 +145,12 @@ impl Rect2 {
     /// `amount` may be negative, but care must be taken: If the resulting `size` has
     /// negative components the computation may be incorrect.
     #[inline]
-    pub fn grow_side(&self, side: RectSide, amount: real) -> Self {
+    pub fn grow_side(&self, side: Side, amount: real) -> Self {
         match side {
-            RectSide::Left => self.grow_individual(amount, 0.0, 0.0, 0.0),
-            RectSide::Top => self.grow_individual(0.0, amount, 0.0, 0.0),
-            RectSide::Right => self.grow_individual(0.0, 0.0, amount, 0.0),
-            RectSide::Bottom => self.grow_individual(0.0, 0.0, 0.0, amount),
+            Side::LEFT => self.grow_individual(amount, 0.0, 0.0, 0.0),
+            Side::TOP => self.grow_individual(0.0, amount, 0.0, 0.0),
+            Side::RIGHT => self.grow_individual(0.0, 0.0, amount, 0.0),
+            Side::BOTTOM => self.grow_individual(0.0, 0.0, 0.0, amount),
         }
     }
 
@@ -258,13 +256,13 @@ impl Rect2 {
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Rect2 {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Rect2
+        sys::VariantType::RECT2
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Rect2);
+crate::meta::impl_godot_as_self!(Rect2);
 
 impl ApproxEq for Rect2 {
     /// Returns if the two `Rect2`s are approximately equal, by comparing `position` and `size` separately.

@@ -12,7 +12,6 @@ use sys::types::OpaqueString;
 use sys::{ffi_methods, interface_fn, GodotFfi};
 
 use crate::builtin::inner;
-use crate::builtin::meta::impl_godot_as_self;
 
 use super::string_chars::validate_unicode_scalar_sequence;
 use super::{NodePath, StringName};
@@ -32,7 +31,7 @@ use super::{NodePath, StringName};
 ///
 /// When interfacing with the Godot engine API, you often have the choice between `String` and `GString`. In user-declared methods
 /// exposed to Godot through the `#[func]` attribute, both types can be used as parameters and return types, and conversions
-/// are done transparently. For auto-generated binding APIs in `godot::engine`, both parameters and return types are `GString`.
+/// are done transparently. For auto-generated binding APIs in `godot::classes`, both parameters and return types are `GString`.
 /// In the future, we will likely declare parameters as `impl Into<GString>`, allowing `String` or `&str` to be passed.
 ///
 /// As a general guideline, use `GString` if:
@@ -88,6 +87,12 @@ impl GString {
     ///
     /// Note: This operation is *O*(*n*). Consider using [`chars_unchecked`][Self::chars_unchecked]
     /// if you can make sure the string is a valid UTF-32.
+    #[cfg_attr(
+        since_api = "4.1",
+        deprecated = "Use `chars()` instead. \n\
+        Since version 4.1, Godot ensures valid UTF-32, checked and unchecked overloads are no longer needed. \n\
+        For details, see [godotengine/godot#74760](https://github.com/godotengine/godot/pull/74760)."
+    )]
     pub fn chars_checked(&self) -> &[char] {
         unsafe {
             let s = self.string_sys();
@@ -111,6 +116,12 @@ impl GString {
     /// Make sure the string only contains valid unicode scalar values, currently
     /// Godot allows for unpaired surrogates and out of range code points to be appended
     /// into the string.
+    #[cfg_attr(
+        since_api = "4.1",
+        deprecated = "Use `chars()` instead. \n\
+        Since version 4.1, ensures valid UTF-32, checked and unchecked overloads are no longer needed. \n\
+        For details, see [godotengine/godot#74760](https://github.com/godotengine/godot/pull/74760)."
+    )]
     pub unsafe fn chars_unchecked(&self) -> &[char] {
         let s = self.string_sys();
         let len = interface_fn!(string_to_utf32_chars)(s, std::ptr::null_mut(), 0);
@@ -123,6 +134,16 @@ impl GString {
         std::slice::from_raw_parts(ptr as *const char, len as usize)
     }
 
+    /// Gets the internal chars slice from a [`GString`].
+    #[cfg(since_api = "4.1")]
+    pub fn chars(&self) -> &[char] {
+        // SAFETY: Godot 4.1 ensures valid UTF-32, making this safe to call.
+        #[allow(deprecated)]
+        unsafe {
+            self.chars_unchecked()
+        }
+    }
+
     ffi_methods! {
         type sys::GDExtensionStringPtr = *mut Self;
 
@@ -130,6 +151,34 @@ impl GString {
         fn new_with_string_uninit = new_with_uninit;
         fn string_sys = sys;
         fn string_sys_mut = sys_mut;
+    }
+
+    /// Consumes self and turns it into a sys-ptr, should be used together with [`from_owned_string_sys`](Self::from_owned_string_sys).
+    ///
+    /// This will leak memory unless `from_owned_string_sys` is called on the returned pointer.
+    pub(crate) fn into_owned_string_sys(self) -> sys::GDExtensionStringPtr {
+        sys::static_assert_eq_size_align!(StringName, sys::types::OpaqueString);
+
+        let leaked = Box::into_raw(Box::new(self));
+        leaked.cast()
+    }
+
+    /// Creates a `GString` from a sys-ptr without incrementing the refcount.
+    ///
+    /// # Safety
+    ///
+    /// * Must only be used on a pointer returned from a call to [`into_owned_string_sys`](Self::into_owned_string_sys).
+    /// * Must not be called more than once on the same pointer.
+    #[deny(unsafe_op_in_unsafe_fn)]
+    pub(crate) unsafe fn from_owned_string_sys(ptr: sys::GDExtensionStringPtr) -> Self {
+        sys::static_assert_eq_size_align!(StringName, sys::types::OpaqueString);
+
+        let ptr = ptr.cast::<Self>();
+
+        // SAFETY: `ptr` was returned from a call to `into_owned_string_sys`, which means it was created by a call to
+        // `Box::into_raw`, thus we can use `Box::from_raw` here. Additionally this is only called once on this pointer.
+        let boxed = unsafe { Box::from_raw(ptr) };
+        *boxed
     }
 
     /// Moves this string into a string sys pointer. This is the same as using [`GodotFfi::move_return_ptr`].
@@ -160,13 +209,13 @@ impl GString {
 //   `std::mem::forget(string.clone())`.
 unsafe impl GodotFfi for GString {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::String
+        sys::VariantType::STRING
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(GString);
+crate::meta::impl_godot_as_self!(GString);
 
 impl_builtin_traits! {
     for GString {
@@ -181,7 +230,17 @@ impl_builtin_traits! {
 
 impl fmt::Display for GString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s: String = self.chars_checked().iter().collect();
+        let s: String;
+
+        #[cfg(before_api = "4.1")]
+        {
+            s = self.chars_checked().iter().collect();
+        }
+        #[cfg(since_api = "4.1")]
+        {
+            s = self.chars().iter().collect();
+        }
+
         f.write_str(s.as_str())
     }
 }
@@ -316,6 +375,8 @@ mod serialize {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::fmt::Formatter;
 
+    // For "Available on crate feature `serde`" in docs. Cannot be inherited from module. Also does not support #[derive] (e.g. in Vector2).
+    #[cfg_attr(published_docs, doc(cfg(feature = "serde")))]
     impl Serialize for GString {
         #[inline]
         fn serialize<S>(
@@ -329,8 +390,8 @@ mod serialize {
         }
     }
 
-    #[cfg(feature = "serde")]
-    impl<'de> serialize::Deserialize<'de> for GString {
+    #[cfg_attr(published_docs, doc(cfg(feature = "serde")))]
+    impl<'de> Deserialize<'de> for GString {
         #[inline]
         fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
         where

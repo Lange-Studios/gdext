@@ -52,6 +52,17 @@ jobs:
       - name: "Check rustfmt"
         run: cargo fmt --all -- --check
 
+      - name: "Run custom repo checks"
+        run: |
+          cargo run -p repo-tweak
+          git diff --quiet --exit-code || {
+            echo "::error::Godot versions out of sync; update with `cargo run -p repo-tweak`."
+            echo "Differences:"
+            echo "----------------------------------------------------"
+            git diff
+            echo "----------------------------------------------------"
+            exit 1
+          }
 
   # Needs to be its own job (apart from sync-doc), because lints don't work with --no-deps, and because it contributes to ci-status.
   doc-lints:
@@ -139,7 +150,7 @@ jobs:
             os: windows-latest
             artifact-name: windows-nightly
             godot-binary: godot.windows.editor.dev.x86_64.exe
-            # rust-extra-args: --features godot/custom-godot
+            # rust-extra-args: --features godot/api-custom
 
           # Linux
 
@@ -154,7 +165,7 @@ jobs:
             os: ubuntu-20.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            rust-extra-args: --features godot/custom-godot,godot/experimental-threads,godot/serde,codegen-full-experimental
+            rust-extra-args: --features itest/experimental-threads,itest/codegen-full-experimental,godot/api-custom,godot/serde
 
           # Linux compat
 
@@ -172,7 +183,7 @@ jobs:
             godot-binary: godot.linuxbsd.editor.dev.x86_64.llvm.san
             rust-toolchain: nightly
             rust-env-rustflags: -Zrandomize-layout -Zsanitizer=address
-            rust-extra-args: --features godot/custom-godot
+            rust-extra-args: --features godot/api-custom
             # Sanitizers can't build proc-macros and build scripts; with --target, cargo ignores RUSTFLAGS for those two.
             rust-target: x86_64-unknown-linux-gnu
 
@@ -200,7 +211,7 @@ jobs:
           rust-toolchain: ${{ matrix.rust-toolchain || 'stable' }}
           rust-env-rustflags: ${{ matrix.rust-env-rustflags }}
           rust-target: ${{ matrix.rust-target }}
-          with-llvm: ${{ contains(matrix.name, 'macos') && contains(matrix.rust-extra-args, 'custom-godot') }}
+          with-llvm: ${{ contains(matrix.name, 'macos') && contains(matrix.rust-extra-args, 'api-custom') }}
           godot-check-header: ${{ matrix.godot-check-header }}
 
       - name: "Build and test hot-reload"

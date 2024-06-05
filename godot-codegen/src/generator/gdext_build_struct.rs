@@ -53,7 +53,9 @@ pub fn make_gdext_build_struct(header: &GodotApiVersion) -> TokenStream {
                 (version.major as u8, version.minor as u8, version.patch as u8)
             }
 
-            /// For a string "4.x", returns `true` if the current Godot version is strictly less than 4.x.
+            // Duplicates code from `before_api` in `godot-bindings/lib.rs`.
+
+            /// For a string `"4.x"`, returns `true` if the current Godot version is strictly less than 4.x.
             ///
             /// Runtime equivalent of `#[cfg(before_api = "4.x")]`.
             ///
@@ -69,7 +71,7 @@ pub fn make_gdext_build_struct(header: &GodotApiVersion) -> TokenStream {
                 minor < queried_minor
             }
 
-            /// For a string "4.x", returns `true` if the current Godot version is equal or greater to 4.x.
+            /// For a string `"4.x"`, returns `true` if the current Godot version is equal or greater to 4.x.
             ///
             /// Runtime equivalent of `#[cfg(since_api = "4.x")]`.
             ///

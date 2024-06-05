@@ -5,94 +5,198 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::models::domain::{Enum, Enumerator, EnumeratorValue};
-use crate::util;
-use proc_macro2::{Literal, TokenStream};
-use quote::quote;
+//! Functions for generating engine-provided enums.
+//!
+//! See also models/domain/enums.rs for other enum-related methods.
 
-pub fn make_enums(enums: &[Enum]) -> TokenStream {
+use crate::models::domain::{Enum, Enumerator, EnumeratorValue};
+use crate::{conv, util};
+use proc_macro2::TokenStream;
+use quote::{quote, ToTokens};
+
+pub fn make_enums(enums: &[Enum], cfg_attributes: &TokenStream) -> TokenStream {
     let definitions = enums.iter().map(make_enum_definition);
 
     quote! {
-        #( #definitions )*
+        #( #cfg_attributes #definitions )*
     }
 }
 
+/// Creates a definition for the given enum.
+///
+/// This will also implement all relevant traits and generate appropriate constants for each enumerator.
 pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
-    // TODO enums which have unique ords could be represented as Rust enums
-    // This would allow exhaustive matches (or at least auto-completed matches + #[non_exhaustive]). But even without #[non_exhaustive],
-    // this might be a forward compatibility hazard, if Godot deprecates enumerators and adds new ones with existing ords.
+    make_enum_definition_with(enum_, true, true)
+}
 
-    let rust_enum_name = &enum_.name;
-    let godot_name_doc = if rust_enum_name != enum_.godot_name.as_str() {
-        let doc = format!("Godot enum name: `{}`.", enum_.godot_name);
-        quote! { #[doc = #doc] }
-    } else {
-        TokenStream::new()
-    };
+pub fn make_enum_definition_with(
+    enum_: &Enum,
+    define_enum: bool,
+    define_traits: bool,
+) -> TokenStream {
+    assert!(
+        !(enum_.is_bitfield && enum_.is_exhaustive),
+        "bitfields cannot be marked exhaustive"
+    );
 
-    let rust_enumerators = &enum_.enumerators;
+    // Things needed for the type definition
+    let derives = enum_.derives();
+    let enum_doc = make_enum_doc(enum_);
+    let name = &enum_.name;
 
-    let mut enumerators = Vec::with_capacity(rust_enumerators.len());
+    // Values
+    let enumerators = enum_.enumerators.iter().map(|enumerator| {
+        make_enumerator_definition(enumerator, name.to_token_stream(), !enum_.is_exhaustive)
+    });
 
-    // This is only used for enum ords (i32), not bitfield flags (u64).
-    let mut unique_ords = Vec::with_capacity(rust_enumerators.len());
+    // Various types
+    let ord_type = enum_.ord_type();
+    let engine_trait = enum_.engine_trait();
 
-    for enumerator in rust_enumerators.iter() {
-        let def = make_enumerator_definition(enumerator);
-        enumerators.push(def);
-
-        if let EnumeratorValue::Enum(ord) = enumerator.value {
-            unique_ords.push(ord);
-        }
-    }
-
-    let mut derives = vec!["Copy", "Clone", "Eq", "PartialEq", "Hash", "Debug"];
-
-    if enum_.is_bitfield {
-        derives.push("Default");
-    }
-
-    let derives = derives.into_iter().map(util::ident);
-
-    let index_enum_impl = if enum_.is_bitfield {
-        // Bitfields don't implement IndexEnum.
-        TokenStream::new()
-    } else {
-        // Enums implement IndexEnum only if they are "index-like" (see docs).
-        if let Some(enum_max) = try_count_index_enum(enum_) {
+    let definition = if define_enum {
+        // Exhaustive enums are declared as Rust enums.
+        if enum_.is_exhaustive {
             quote! {
-                impl crate::obj::IndexEnum for #rust_enum_name {
-                    const ENUMERATOR_COUNT: usize = #enum_max;
+                #[repr(i32)]
+                #[derive(Debug, #( #derives ),* )]
+                #( #[doc = #enum_doc] )*
+                ///
+                /// This enum is exhaustive; you should not expect future Godot versions to add new enumerators.
+                #[allow(non_camel_case_types)]
+                pub enum #name {
+                    #( #enumerators )*
                 }
             }
-        } else {
-            TokenStream::new()
         }
+        //
+        // Non-exhaustive enums are declared as newtype structs with associated constants.
+        else {
+            // Workaround because traits are defined in separate crate, but need access to field `ord`.
+            let ord_vis = (!define_traits).then(|| {
+                quote! { #[doc(hidden)] pub }
+            });
+
+            let debug_impl = make_enum_debug_impl(enum_);
+            quote! {
+                #[repr(transparent)]
+                #[derive( #( #derives ),* )]
+                #( #[doc = #enum_doc] )*
+                pub struct #name {
+                    #ord_vis ord: #ord_type
+                }
+
+                impl #name {
+                    #( #enumerators )*
+                }
+
+                #debug_impl
+            }
+        }
+    } else {
+        TokenStream::new()
     };
 
-    let bitfield_ops;
-    let self_as_trait;
-    let engine_impl;
-    let enum_ord_type;
+    let traits = define_traits.then(|| {
+        // Trait implementations
+        let engine_trait_impl = make_enum_engine_trait_impl(enum_);
+        let index_enum_impl = make_enum_index_impl(enum_);
+        let bitwise_impls = make_enum_bitwise_operators(enum_);
+
+        quote! {
+            #engine_trait_impl
+            #index_enum_impl
+            #bitwise_impls
+
+            impl crate::meta::GodotConvert for #name {
+                type Via = #ord_type;
+            }
+
+            impl crate::meta::ToGodot for #name {
+                fn to_godot(&self) -> Self::Via {
+                    <Self as #engine_trait>::ord(*self)
+                }
+            }
+
+            impl crate::meta::FromGodot for #name {
+                fn try_from_godot(via: Self::Via) -> std::result::Result<Self, crate::meta::error::ConvertError> {
+                    <Self as #engine_trait>::try_from_ord(via)
+                        .ok_or_else(|| crate::meta::error::FromGodotError::InvalidEnum.into_error(via))
+                }
+            }
+        }
+    });
+
+    quote! {
+        #definition
+        #traits
+    }
+}
+
+/// Creates an implementation of `IndexEnum` for the given enum.
+///
+/// Returns `None` if `enum_` isn't an indexable enum.
+fn make_enum_index_impl(enum_: &Enum) -> Option<TokenStream> {
+    let enum_max = enum_.find_index_enum_max()?;
+    let name = &enum_.name;
+
+    Some(quote! {
+        impl crate::obj::IndexEnum for #name {
+            const ENUMERATOR_COUNT: usize = #enum_max;
+        }
+    })
+}
+
+/// Implement `Debug` trait for the enum.
+fn make_enum_debug_impl(enum_: &Enum) -> TokenStream {
+    let enum_name = &enum_.name;
+    let enum_name_str = enum_name.to_string();
+
+    let enumerators = enum_.enumerators.iter().map(|enumerator| {
+        let Enumerator { name, .. } = enumerator;
+        let name_str = name.to_string();
+        quote! {
+            Self::#name => #name_str,
+        }
+    });
+
+    quote! {
+        impl std::fmt::Debug for #enum_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                // Many enums have duplicates, thus allow unreachable.
+                // In the future, we could print sth like "ONE|TWO" instead (at least for unstable Debug).
+                #[allow(unreachable_patterns)]
+                let enumerator = match *self {
+                    #( #enumerators )*
+                    _ => {
+                        f.debug_struct(#enum_name_str)
+                        .field("ord", &self.ord)
+                        .finish()?;
+                        return Ok(());
+                    }
+                };
+
+                f.write_str(enumerator)
+            }
+        }
+    }
+}
+
+/// Creates an implementation of the engine trait for the given enum.
+///
+/// This will implement the trait returned by [`Enum::engine_trait`].
+fn make_enum_engine_trait_impl(enum_: &Enum) -> TokenStream {
+    let name = &enum_.name;
+    let engine_trait = enum_.engine_trait();
 
     if enum_.is_bitfield {
-        bitfield_ops = quote! {
+        quote! {
+            // We may want to add this in the future.
+            //
             // impl #enum_name {
             //     pub const UNSET: Self = Self { ord: 0 };
             // }
-            impl std::ops::BitOr for #rust_enum_name {
-                type Output = Self;
 
-                fn bitor(self, rhs: Self) -> Self::Output {
-                    Self { ord: self.ord | rhs.ord }
-                }
-            }
-        };
-        enum_ord_type = quote! { u64 };
-        self_as_trait = quote! { <Self as crate::obj::EngineBitfield> };
-        engine_impl = quote! {
-            impl crate::obj::EngineBitfield for #rust_enum_name {
+            impl #engine_trait for #name {
                 fn try_from_ord(ord: u64) -> Option<Self> {
                     Some(Self { ord })
                 }
@@ -101,17 +205,42 @@ pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
                     self.ord
                 }
             }
-        };
-    } else {
-        // Ordinals are not necessarily in order.
-        unique_ords.sort();
-        unique_ords.dedup();
+        }
+    } else if enum_.is_exhaustive {
+        let enumerators = enum_.enumerators.iter().map(|enumerator| {
+            let Enumerator {
+                name,
+                value: EnumeratorValue::Enum(ord),
+                ..
+            } = enumerator
+            else {
+                panic!("exhaustive enum contains bitfield enumerators")
+            };
 
-        bitfield_ops = TokenStream::new();
-        enum_ord_type = quote! { i32 };
-        self_as_trait = quote! { <Self as crate::obj::EngineEnum> };
-        engine_impl = quote! {
-            impl crate::obj::EngineEnum for #rust_enum_name {
+            quote! {
+                #ord => Some(Self::#name),
+            }
+        });
+
+        quote! {
+            impl #engine_trait for #name {
+                fn try_from_ord(ord: i32) -> Option<Self> {
+                    match ord {
+                        #( #enumerators )*
+                        _ => None,
+                    }
+                }
+
+                fn ord(self) -> i32 {
+                    self as i32
+                }
+            }
+        }
+    } else {
+        let unique_ords = enum_.unique_ords().expect("self is an enum");
+
+        quote! {
+            impl #engine_trait for #name {
                 fn try_from_ord(ord: i32) -> Option<Self> {
                     match ord {
                         #( ord @ #unique_ords )|* => Some(Self { ord }),
@@ -123,118 +252,115 @@ pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
                     self.ord
                 }
             }
-        };
-    };
-
-    // Enumerator ordinal stored as i32, since that's enough to hold all current values and the default repr in C++.
-    // Public interface is i64 though, for consistency (and possibly forward compatibility?).
-    // Bitfield ordinals are stored as u64. See also: https://github.com/godotengine/godot-cpp/pull/1320
-    quote! {
-        #[repr(transparent)]
-        #[derive(#( #derives ),*)]
-        #godot_name_doc
-        pub struct #rust_enum_name {
-            ord: #enum_ord_type
-        }
-        impl #rust_enum_name {
-            #(
-                #enumerators
-            )*
-        }
-
-        #engine_impl
-        #index_enum_impl
-        #bitfield_ops
-
-        impl crate::builtin::meta::GodotConvert for #rust_enum_name {
-            type Via = #enum_ord_type;
-        }
-
-        impl crate::builtin::meta::ToGodot for #rust_enum_name {
-            fn to_godot(&self) -> Self::Via {
-                #self_as_trait::ord(*self)
-            }
-        }
-
-        impl crate::builtin::meta::FromGodot for #rust_enum_name {
-            fn try_from_godot(via: Self::Via) -> std::result::Result<Self, crate::builtin::meta::ConvertError> {
-                #self_as_trait::try_from_ord(via)
-                    .ok_or_else(|| crate::builtin::meta::FromGodotError::InvalidEnum.into_error(via))
-            }
         }
     }
 }
 
-pub fn make_enumerator_ord(ord: i32) -> Literal {
-    Literal::i32_suffixed(ord)
-}
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-// Implementation
-
-fn make_bitfield_flag_ord(ord: u64) -> Literal {
-    Literal::u64_suffixed(ord)
-}
-
-fn make_enumerator_definition(enumerator: &Enumerator) -> TokenStream {
-    let ordinal_lit = match enumerator.value {
-        EnumeratorValue::Enum(ord) => make_enumerator_ord(ord),
-        EnumeratorValue::Bitfield(ord) => make_bitfield_flag_ord(ord),
-    };
-
-    let rust_ident = &enumerator.name;
-    let godot_name_str = &enumerator.godot_name;
-
-    let doc = if rust_ident == godot_name_str {
-        TokenStream::new()
-    } else {
-        let doc_string = format!("Godot enumerator name: `{}`.", godot_name_str);
-        quote! {
-            #[doc(alias = #godot_name_str)]
-            #[doc = #doc_string]
-        }
-    };
-
-    quote! {
-        #doc
-        pub const #rust_ident: Self = Self { ord: #ordinal_lit };
-    }
-}
-
-/// If an enum qualifies as "indexable" (can be used as array index), returns the number of possible values.
+/// Creates implementations for bitwise operators for the given enum.
 ///
-/// See `godot::obj::IndexEnum` for what constitutes "indexable".
-fn try_count_index_enum(enum_: &Enum) -> Option<usize> {
-    if enum_.is_bitfield || enum_.enumerators.is_empty() {
-        return None;
+/// Currently this is just [`BitOr`](std::ops::BitOr) for bitfields but that could be expanded in the future.
+fn make_enum_bitwise_operators(enum_: &Enum) -> TokenStream {
+    let name = &enum_.name;
+
+    if enum_.is_bitfield {
+        quote! {
+            impl std::ops::BitOr for #name {
+                type Output = Self;
+
+                fn bitor(self, rhs: Self) -> Self::Output {
+                    Self { ord: self.ord | rhs.ord }
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    }
+}
+/// Returns the documentation for the given enum.
+///
+/// Each string is one line of documentation, usually this needs to be wrapped in a `#[doc = ..]`.
+fn make_enum_doc(enum_: &Enum) -> Vec<String> {
+    let mut docs = Vec::new();
+
+    if enum_.name != enum_.godot_name {
+        docs.push(format!("Godot enum name: `{}`.", enum_.godot_name))
     }
 
-    // Sort by ordinal value. Allocates for every enum in the JSON, but should be OK (most enums are indexable).
-    let enumerators = {
-        let mut enumerators = enum_.enumerators.iter().collect::<Vec<_>>();
-        enumerators.sort_by_key(|v| v.value.to_i64());
-        enumerators
+    docs
+}
+
+/// Creates a definition for `enumerator` of the type `enum_type`.
+///
+/// If `as_constant` is true, it will be a `const` definition like:
+/// ```ignore
+/// pub const NAME: enum_type = ord;
+/// ```
+/// Otherwise, it will be a regular enum variant like:
+/// ```ignore
+/// NAME = ord,
+/// ```
+fn make_enumerator_definition(
+    enumerator: &Enumerator,
+    enum_type: TokenStream,
+    as_constant: bool,
+) -> TokenStream {
+    let Enumerator {
+        name,
+        godot_name,
+        value,
+    } = enumerator;
+
+    let docs = if &name.to_string() != godot_name {
+        let doc = format!("Godot enumerator name: `{godot_name}`");
+
+        quote! {
+            #[doc(alias = #godot_name)]
+            #[doc = #doc]
+        }
+    } else {
+        TokenStream::new()
     };
 
-    // Highest ordinal must be the "MAX" one.
-    // The presence of "MAX" indicates that Godot devs intended the enum to be used as an index.
-    // The condition is not strictly necessary and could theoretically be relaxed; there would need to be concrete use cases though.
-    let last = enumerators.last().unwrap(); // safe because of is_empty check above.
-    if !last.godot_name.ends_with("_MAX") {
-        return None;
+    if as_constant {
+        quote! {
+            #docs
+            pub const #name: #enum_type = #enum_type {
+                ord: #value
+            };
+        }
+    } else {
+        quote! {
+            #docs
+            #name = #value,
+        }
     }
+}
 
-    // The rest of the enumerators must be contiguous and without gaps (duplicates are OK).
-    let mut last_value = 0;
-    for enumerator in enumerators.iter() {
-        let e_value = enumerator.value.to_i64();
+pub(crate) fn make_deprecated_enumerators(enum_: &Enum) -> TokenStream {
+    let enum_name = &enum_.name;
+    let deprecated_enumerators = enum_.enumerators.iter().filter_map(|enumerator| {
+        let Enumerator { name, .. } = enumerator;
 
-        if last_value != e_value && last_value + 1 != e_value {
+        if name == "MAX" {
             return None;
         }
 
-        last_value = e_value;
-    }
+        let converted = conv::to_pascal_case(&name.to_string())
+            .replace("2d", "2D")
+            .replace("3d", "3D");
 
-    Some(last_value as usize)
+        let pascal_name = util::ident(&converted);
+        let msg = format!("Use `{enum_name}::{name}` instead.");
+
+        let decl = quote! {
+            #[deprecated = #msg]
+            pub const #pascal_name: #enum_name = Self::#name;
+        };
+
+        Some(decl)
+    });
+
+    quote! {
+        #( #deprecated_enumerators )*
+    }
 }

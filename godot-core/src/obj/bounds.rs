@@ -7,7 +7,7 @@
 
 //! Different ways how bounds of a `GodotClass` can be checked.
 //!
-//! This module contains three traits that can be used to check the characteristics of a `GodotClass` type:
+//! This module contains multiple traits that can be used to check the characteristics of a `GodotClass` type:
 //!
 //! 1. [`Declarer`] tells you whether the class is provided by the engine or user-defined.
 //!    - [`DeclEngine`] is used for all classes provided by the engine (e.g. `Node3D`).
@@ -19,15 +19,16 @@
 //!    - [`MemRefCounted`] is used for `RefCounted` classes and derived.
 //!    - [`MemManual`] is used for `Object` and all inherited classes, which are not `RefCounted` (e.g. `Node`).<br><br>
 //!
-//! 3. [`DynMemory`] is used to check the memory strategy of the **dynamic** type.
-//!
-//!    When you operate on methods of `T` or `Gd<T>` and are interested in instances, you can use this.
-//!    Most of the time, this is not what you want -- just use `Memory` if you want to know if a type is manually managed or ref-counted.
-//!    - [`MemRefCounted`] is used for `RefCounted` classes and derived. These are **always** reference-counted.
-//!    - [`MemManual`] is used instances inheriting `Object`, which are not `RefCounted` (e.g. `Node`). Excludes `Object` itself. These are
-//!      **always** manually managed.
-//!    - [`MemDynamic`] is used for `Object` instances. `Gd<Object>` can point to objects of any possible class, so whether we are dealing with
-//!      a ref-counted or manually-managed object is determined only at runtime.
+// FIXME excluded because broken; see below.
+// 3. [`DynMemory`] is used to check the memory strategy of the **dynamic** type.
+//
+//    When you operate on methods of `T` or `Gd<T>` and are interested in instances, you can use this.
+//    Most of the time, this is not what you want -- just use `Memory` if you want to know if a type is manually managed or ref-counted.
+//    - [`MemRefCounted`] is used for `RefCounted` classes and derived. These are **always** reference-counted.
+//    - [`MemManual`] is used instances inheriting `Object`, which are not `RefCounted` (e.g. `Node`). Excludes `Object` itself. These are
+//      **always** manually managed.
+//    - [`MemDynamic`] is used for `Object` instances. `Gd<Object>` can point to objects of any possible class, so whether we are dealing with
+//      a ref-counted or manually-managed object is determined only at runtime.
 //!
 //!
 //! # Example
@@ -44,12 +45,13 @@
 //! }
 //! ```
 //!
-//! Note that depending on if you want to exclude `Object`, you should use `DynMemory` instead of `Memory`.
+// Note that depending on if you want to exclude `Object`, you should use `DynMemory` instead of `Memory`.
 
 use crate::obj::cap::GodotDefault;
 use crate::obj::{Bounds, Gd, GodotClass, RawGd};
+use crate::registry::callbacks;
 use crate::storage::Storage;
-use crate::{callbacks, out, sys};
+use crate::{out, sys};
 use private::Sealed;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -64,6 +66,8 @@ pub(super) mod private {
     ///
     /// See [`bounds`](crate::obj::bounds) module for how to use this for bounds checking.
     ///
+    /// # No manual `impl`
+    ///
     /// <div class="warning">
     /// <strong>Never</strong> implement this trait manually.
     /// </div>
@@ -71,7 +75,7 @@ pub(super) mod private {
     /// Most of the time, this trait is covered by [`#[derive(GodotClass)]`](../register/derive.GodotClass.html).
     /// If you implement `GodotClass` manually, use the [`implement_godot_bounds!`][crate::implement_godot_bounds] macro.
     ///
-    /// There are two reasons to avoid a hand-written `impl Bounds`:
+    /// There are two reasons to avoid a handwritten `impl Bounds`:
     /// - The trait is `unsafe` and it is very easy to get internal bounds wrong. This will lead to immediate UB.
     /// - Apart from the documented members, the trait may have undocumented items that may be broken at any time and stand under no SemVer
     ///   guarantees.
@@ -83,6 +87,10 @@ pub(super) mod private {
         /// Defines the memory strategy of the static type.
         type Memory: Memory;
 
+        // FIXME: this is broken as a bound: one cannot use T: Bounds<DynMemory = MemRefCounted> to include Object AND RefCounted,
+        // since Object itself has DynMemory = MemDynamic. Needs to either use traits like in gdnative, or more types to account for
+        // different combinations (as only positive ones can be expressed, not T: Bounds<Memory != MemManual>).
+        #[doc(hidden)]
         /// Defines the memory strategy of the instance (at runtime).
         type DynMemory: DynMemory;
 
@@ -101,7 +109,7 @@ pub(super) mod private {
     /// ```no_run
     /// use godot::prelude::*;
     /// use godot::obj::bounds::implement_godot_bounds;
-    /// use godot::builtin::meta::ClassName;
+    /// use godot::meta::ClassName;
     ///
     /// struct MyClass {}
     ///
@@ -143,6 +151,7 @@ pub trait Memory: Sealed {}
 /// Specifies the memory strategy of the dynamic type.
 ///
 /// For `Gd<Object>`, it is determined at runtime whether the instance is manually managed or ref-counted.
+#[doc(hidden)]
 pub trait DynMemory: Sealed {
     /// Initialize reference counter
     #[doc(hidden)]
@@ -162,7 +171,7 @@ pub trait DynMemory: Sealed {
     ///
     /// # Safety
     ///
-    /// If this method is used on a [`Gd`] that inherits from [`RefCounted`](crate::engine::RefCounted)
+    /// If this method is used on a [`Gd`] that inherits from [`RefCounted`](crate::classes::RefCounted)
     /// then the reference count must either be incremented before it hits 0, or some [`Gd`] referencing
     /// this object must be forgotten.
     #[doc(hidden)]
@@ -171,6 +180,10 @@ pub trait DynMemory: Sealed {
     /// Check if ref-counted, return `None` if information is not available (dynamic and obj dead)
     #[doc(hidden)]
     fn is_ref_counted<T: GodotClass>(obj: &RawGd<T>) -> Option<bool>;
+
+    /// Return the reference count, or `None` if the object is dead or manually managed.
+    #[doc(hidden)]
+    fn get_ref_count<T: GodotClass>(obj: &RawGd<T>) -> Option<usize>;
 
     /// Returns `true` if argument and return pointers are passed as `Ref<T>` pointers given this
     /// [`PtrcallType`].
@@ -233,6 +246,13 @@ impl DynMemory for MemRefCounted {
         Some(true)
     }
 
+    fn get_ref_count<T: GodotClass>(obj: &RawGd<T>) -> Option<usize> {
+        let ref_count = obj.with_ref_counted(|refc| refc.get_reference_count());
+
+        // TODO find a safer cast alternative, e.g. num-traits crate with ToPrimitive (Debug) + AsPrimitive (Release).
+        Some(ref_count as usize)
+    }
+
     fn pass_as_ref(call_type: sys::PtrcallType) -> bool {
         matches!(call_type, sys::PtrcallType::Virtual)
     }
@@ -240,31 +260,32 @@ impl DynMemory for MemRefCounted {
 
 /// Memory managed through Godot reference counter, if present; otherwise manual.
 /// This is used only for `Object` classes.
+#[doc(hidden)]
 pub struct MemDynamic {}
+impl MemDynamic {
+    /// Check whether dynamic type is ref-counted.
+    fn inherits_refcounted<T: GodotClass>(obj: &RawGd<T>) -> bool {
+        obj.instance_id_unchecked()
+            .map(|id| id.is_ref_counted())
+            .unwrap_or(false)
+    }
+}
 impl Sealed for MemDynamic {}
 impl DynMemory for MemDynamic {
     fn maybe_init_ref<T: GodotClass>(obj: &mut RawGd<T>) {
         out!("  MemDyn::init  <{}>", std::any::type_name::<T>());
-        if obj
-            .instance_id_unchecked()
-            .map(|id| id.is_ref_counted())
-            .unwrap_or(false)
-        {
+        if Self::inherits_refcounted(obj) {
             // Will call `RefCounted::init_ref()` which checks for liveness.
-            out!("MemDyn -> MemRefc");
+            out!("    MemDyn -> MemRefc");
             MemRefCounted::maybe_init_ref(obj)
         } else {
-            out!("MemDyn -> MemManu");
+            out!("    MemDyn -> MemManu");
         }
     }
 
     fn maybe_inc_ref<T: GodotClass>(obj: &mut RawGd<T>) {
         out!("  MemDyn::inc   <{}>", std::any::type_name::<T>());
-        if obj
-            .instance_id_unchecked()
-            .map(|id| id.is_ref_counted())
-            .unwrap_or(false)
-        {
+        if Self::inherits_refcounted(obj) {
             // Will call `RefCounted::reference()` which checks for liveness.
             MemRefCounted::maybe_inc_ref(obj)
         }
@@ -288,6 +309,14 @@ impl DynMemory for MemDynamic {
         // Return `None` if obj is dead
         obj.instance_id_unchecked().map(|id| id.is_ref_counted())
     }
+
+    fn get_ref_count<T: GodotClass>(obj: &RawGd<T>) -> Option<usize> {
+        if Self::inherits_refcounted(obj) {
+            MemRefCounted::get_ref_count(obj)
+        } else {
+            None
+        }
+    }
 }
 
 /// No memory management, user responsible for not leaking.
@@ -303,6 +332,9 @@ impl DynMemory for MemManual {
     }
     fn is_ref_counted<T: GodotClass>(_obj: &RawGd<T>) -> Option<bool> {
         Some(false)
+    }
+    fn get_ref_count<T: GodotClass>(_obj: &RawGd<T>) -> Option<usize> {
+        None
     }
 }
 

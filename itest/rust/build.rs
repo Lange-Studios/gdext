@@ -81,19 +81,19 @@ macro_rules! push_newtype {
             #[derive(Clone, PartialEq, Debug)]
             pub struct $name($T);
 
-            impl godot::builtin::meta::GodotConvert for $name {
+            impl godot::meta::GodotConvert for $name {
                 type Via = $T;
             }
 
-            impl godot::builtin::meta::ToGodot for $name {
+            impl godot::meta::ToGodot for $name {
                 #[allow(clippy::clone_on_copy)]
                 fn to_godot(&self) -> Self::Via {
                     self.0.clone()
                 }
             }
 
-            impl godot::builtin::meta::FromGodot for $name {
-                fn try_from_godot(via: Self::Via) -> Result<Self, godot::builtin::meta::ConvertError> {
+            impl godot::meta::FromGodot for $name {
+                fn try_from_godot(via: Self::Via) -> Result<Self, godot::meta::error::ConvertError> {
                     Ok(Self(via))
                 }
             }
@@ -148,8 +148,11 @@ fn collect_inputs() -> Vec<Input> {
     push!(inputs; PackedStringArray, PackedStringArray, PackedStringArray(), PackedStringArray::new());
     push!(inputs; PackedVector2Array, PackedVector2Array, PackedVector2Array(), PackedVector2Array::new());
     push!(inputs; PackedVector3Array, PackedVector3Array, PackedVector3Array(), PackedVector3Array::new());
-    #[cfg(since_api = "4.3")]
-    push!(inputs; PackedVector4Array, PackedVector4Array, PackedVector4Array(), PackedVector4Array::new());
+    // This is being run in a build script at the same time as other build-scripts, so the `rustc-cfg` directives haven't been run for this
+    // build-script. This means that `#[cfg(since_api = "4.3")]` wouldn't do anything.
+    if godot_bindings::since_api("4.3") {
+        push!(inputs; PackedVector4Array, PackedVector4Array, PackedVector4Array(), PackedVector4Array::new());
+    }
     push!(inputs; PackedColorArray, PackedColorArray, PackedColorArray(), PackedColorArray::new());
 
     push_newtype!(inputs; int, NewI64(i64), -922337203685477580);
@@ -212,14 +215,12 @@ fn main() {
     let extras = inputs.iter().map(|input| &input.extra);
 
     let rust_tokens = quote::quote! {
-        #![allow(clippy::partialeq_to_none)]
-
         use godot::builtin::*;
-        use godot::builtin::meta::*;
+        use godot::meta::*;
         use godot::log::godot_error;
         use godot::obj::{Gd, InstanceId};
-        use godot::engine::global::Error;
-        use godot::engine::{Node, Resource};
+        use godot::global::Error;
+        use godot::classes::{Node, Resource};
 
         #[derive(godot::register::GodotClass)]
         #[class(init)]
@@ -242,7 +243,10 @@ fn main() {
         #(#extras)*
     };
 
-    let rust_output_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/gen"));
+    // Godot currently still uses local /gen folder. If this changes one day (no good reason right now),
+    // IntegrationTest class could get a func get_out_dir() which returns env!("OUT_DIR") and is called from GDScript.
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let rust_output_dir = Path::new(&out_dir);
     let godot_input_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../godot/input"));
     let godot_output_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../godot/gen"));
 
@@ -556,7 +560,7 @@ fn write_gdscript_code(
     // let (mut last_start, mut prev_end) = (0, 0);
     let mut last = 0;
 
-    let ranges = find_repeated_ranges(&template);
+    let ranges = repo_tweak::find_repeated_ranges(&template, "#(", "#)", &[], false);
     for m in ranges {
         file.write_all(template[last..m.before_start].as_bytes())?;
 
@@ -594,41 +598,4 @@ fn replace_parts(
     }
 
     Ok(())
-}
-
-fn find_repeated_ranges(entire: &str) -> Vec<Match> {
-    const START_PAT: &str = "#(";
-    const END_PAT: &str = "#)";
-
-    let mut search_start = 0;
-    let mut found = vec![];
-    while let Some(start) = entire[search_start..].find(START_PAT) {
-        let before_start = search_start + start;
-        let start = before_start + START_PAT.len();
-        if let Some(end) = entire[start..].find(END_PAT) {
-            let end = start + end;
-            let after_end = end + END_PAT.len();
-
-            println!("Found {start}..{end}");
-            found.push(Match {
-                before_start,
-                start,
-                end,
-                after_end,
-            });
-            search_start = after_end;
-        } else {
-            panic!("unmatched start pattern without end");
-        }
-    }
-
-    found
-}
-
-#[derive(Debug)]
-struct Match {
-    before_start: usize,
-    start: usize,
-    end: usize,
-    after_end: usize,
 }

@@ -12,7 +12,6 @@ use godot_ffi as sys;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{FloatExt, GlamConv, GlamType};
-use crate::builtin::meta::impl_godot_as_self;
 use crate::builtin::{real, RVec3, Vector3, Vector3Axis};
 
 /// Vector used for 3D math using integer coordinates.
@@ -157,19 +156,19 @@ impl_common_vector_fns!(Vector3i, i32);
 impl_integer_vector_glam_fns!(Vector3i, real);
 impl_integer_vector_component_fns!(Vector3i, real, (x, y, z));
 impl_vector_operators!(Vector3i, i32, (x, y, z));
-impl_from_tuple_for_vector3x!(Vector3i, i32);
+impl_swizzle_trait_for_vector3x!(Vector3i, i32);
 
 // SAFETY:
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Vector3i {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Vector3i
+        sys::VariantType::VECTOR3I
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Vector3i);
+crate::meta::impl_godot_as_self!(Vector3i);
 
 impl GlamType for glam::IVec3 {
     type Mapped = Vector3i;

@@ -11,7 +11,6 @@ use godot_ffi as sys;
 use godot_ffi::{ffi_methods, GodotFfi};
 
 use crate::builtin::inner;
-use crate::builtin::meta::impl_godot_as_self;
 
 use super::{GString, StringName};
 
@@ -59,13 +58,13 @@ impl NodePath {
 //   `std::mem::forget(node_path.clone())`.
 unsafe impl GodotFfi for NodePath {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::NodePath
+        sys::VariantType::NODE_PATH
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Opaque; .. }
 }
 
-impl_godot_as_self!(NodePath);
+crate::meta::impl_godot_as_self!(NodePath);
 
 impl_builtin_traits! {
     for NodePath {
@@ -159,6 +158,8 @@ mod serialize {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::fmt::Formatter;
 
+    // For "Available on crate feature `serde`" in docs. Cannot be inherited from module. Also does not support #[derive] (e.g. in Vector2).
+    #[cfg_attr(published_docs, doc(cfg(feature = "serde")))]
     impl Serialize for NodePath {
         #[inline]
         fn serialize<S>(
@@ -172,6 +173,7 @@ mod serialize {
         }
     }
 
+    #[cfg_attr(published_docs, doc(cfg(feature = "serde")))]
     impl<'de> Deserialize<'de> for NodePath {
         #[inline]
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

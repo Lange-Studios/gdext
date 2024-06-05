@@ -5,9 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::obj::Gd;
-use crate::obj::GodotClass;
-use crate::{engine, sys};
+use crate::obj::{Gd, GodotClass};
+use crate::{classes, sys};
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::mem::ManuallyDrop;
 
@@ -39,6 +38,12 @@ impl<T: GodotClass> Base<T> {
     /// The returned Base is a weak pointer, so holding it will not keep the object alive. It must not be accessed after the object is destroyed.
     pub(crate) unsafe fn from_base(base: &Base<T>) -> Base<T> {
         Base::from_obj(Gd::from_obj_sys_weak(base.as_gd().obj_sys()))
+    }
+
+    /// # Safety
+    /// The returned Base is a weak pointer, so holding it will not keep the object alive. It must not be accessed after the object is destroyed.
+    pub(crate) unsafe fn from_gd(gd: &Gd<T>) -> Self {
+        Base::from_obj(Gd::from_obj_sys_weak(gd.obj_sys()))
     }
 
     // Note: not &mut self, to only borrow one field and not the entire struct
@@ -89,12 +94,12 @@ impl<T: GodotClass> Base<T> {
 
 impl<T: GodotClass> Debug for Base<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        engine::debug_string(&self.obj, f, "Base")
+        classes::debug_string(&self.obj, f, "Base")
     }
 }
 
 impl<T: GodotClass> Display for Base<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        engine::display_string(&self.obj, f)
+        classes::display_string(&self.obj, f)
     }
 }

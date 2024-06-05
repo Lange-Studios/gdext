@@ -11,14 +11,9 @@ use std::path::Path;
 
 pub use watch::StopWatch;
 
-// Note: we cannot prevent both `custom-godot` and `prebuilt-godot` from being specified; see Cargo.toml for more information.
+mod import;
 
-#[cfg(not(any(feature = "custom-godot", feature = "prebuilt-godot")))]
-compile_error!(
-    "At least one of `custom-godot` or `prebuilt-godot` must be specified (none given)."
-);
-
-// This is outside of `godot_version` to allow us to use it even when we don't have the `custom-godot`
+// This is outside of `godot_version` to allow us to use it even when we don't have the `api-custom`
 // feature enabled.
 #[derive(Eq, PartialEq, Debug)]
 pub struct GodotVersion {
@@ -39,15 +34,15 @@ pub struct GodotVersion {
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
-// Regenerate all files
+// Custom mode: Regenerate all files
 
 // This file is explicitly included in unit tests. Needs regex dependency.
 #[cfg(test)]
 mod godot_version;
 
-#[cfg(feature = "custom-godot")]
+#[cfg(feature = "api-custom")]
 #[path = ""]
-mod custom {
+mod depend_on_custom {
     use super::*;
 
     pub(crate) mod godot_exe;
@@ -62,7 +57,7 @@ mod custom {
         godot_exe::write_gdextension_headers(h_path, rs_path, false, watch);
     }
 
-    #[cfg(feature = "custom-godot-extheader")]
+    #[cfg(feature = "api-custom-extheader")]
     pub fn write_gdextension_headers_from_c(h_path: &Path, rs_path: &Path, watch: &mut StopWatch) {
         godot_exe::write_gdextension_headers(h_path, rs_path, true, watch);
     }
@@ -72,40 +67,39 @@ mod custom {
     }
 }
 
-#[cfg(feature = "custom-godot")]
-pub use custom::*;
+#[cfg(feature = "api-custom")]
+pub use depend_on_custom::*;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
-// Reuse existing files
+// Prebuilt mode: Reuse existing files
 
-#[cfg(not(feature = "custom-godot"))]
+#[cfg(not(feature = "api-custom"))]
 #[path = ""]
-mod prebuilt {
+mod depend_on_prebuilt {
     use super::*;
+    use crate::import::prebuilt;
 
     pub fn load_gdextension_json(_watch: &mut StopWatch) -> &'static str {
-        godot4_prebuilt::load_gdextension_json()
+        prebuilt::load_gdextension_json()
     }
 
     pub fn write_gdextension_headers(h_path: &Path, rs_path: &Path, watch: &mut StopWatch) {
         // Note: prebuilt artifacts just return a static str.
-        let h_contents = godot4_prebuilt::load_gdextension_header_h();
+        let h_contents = prebuilt::load_gdextension_header_h();
         std::fs::write(h_path, h_contents)
             .unwrap_or_else(|e| panic!("failed to write gdextension_interface.h: {e}"));
         watch.record("write_header_h");
 
-        let rs_contents = godot4_prebuilt::load_gdextension_header_rs();
+        let rs_contents = prebuilt::load_gdextension_header_rs();
         std::fs::write(rs_path, rs_contents)
             .unwrap_or_else(|e| panic!("failed to write gdextension_interface.rs: {e}"));
         watch.record("write_header_rs");
     }
 
     pub(crate) fn get_godot_version() -> GodotVersion {
-        let version: Vec<&str> = godot4_prebuilt::GODOT_VERSION
-            .split('.')
-            .collect::<Vec<_>>();
+        let version: Vec<&str> = prebuilt::GODOT_VERSION.split('.').collect::<Vec<_>>();
         GodotVersion {
-            full_string: godot4_prebuilt::GODOT_VERSION.into(),
+            full_string: prebuilt::GODOT_VERSION.into(),
             major: version[0].parse().unwrap(),
             minor: version[1].parse().unwrap(),
             patch: version
@@ -118,13 +112,11 @@ mod prebuilt {
     }
 }
 
-#[cfg(not(feature = "custom-godot"))]
-pub use prebuilt::*;
+#[cfg(not(feature = "api-custom"))]
+pub use depend_on_prebuilt::*;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Common
-
-const NEXT_MINOR_VERSION: u8 = 3;
 
 pub fn clear_dir(dir: &Path, watch: &mut StopWatch) {
     if dir.exists() {
@@ -134,37 +126,53 @@ pub fn clear_dir(dir: &Path, watch: &mut StopWatch) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("failed to create dir: {e}"));
 }
 
+/// Emit the `cfg` flags for the current Godot version. Allows rustc to know about valid `cfg` values.
 pub fn emit_godot_version_cfg() {
+    // This could also be done as `KNOWN_API_VERSIONS.len() - 1`, but this is more explicit.
+    let all_versions = import::ALL_VERSIONS;
+
+    // Make `published_docs` #[cfg] known. This could be moved to Cargo.toml of all crates in the future.
+    println!(r#"cargo:rustc-check-cfg=cfg(published_docs, values(none()))"#);
+
+    // Emit `rustc-check-cfg` for all minor versions (patch .0), so Cargo doesn't complain when we use the #[cfg]s.
+    for (_, minor, patch) in all_versions.iter().copied() {
+        if minor > 0 && patch == 0 {
+            println!(r#"cargo:rustc-check-cfg=cfg(since_api, values("4.{minor}"))"#);
+            println!(r#"cargo:rustc-check-cfg=cfg(before_api, values("4.{minor}"))"#);
+        }
+    }
+
     let GodotVersion {
-        major,
+        major: _,
         minor,
         patch,
         ..
     } = get_godot_version();
 
+    // Emit `rustc-cfg` dependent on current API version.
     // Start at 1; checking for "since/before 4.0" makes no sense
-    let max = NEXT_MINOR_VERSION;
+    let upcoming_minor = all_versions.last().unwrap().1;
     for m in 1..=minor {
-        println!(r#"cargo:rustc-cfg=since_api="{major}.{m}""#);
+        println!(r#"cargo:rustc-cfg=since_api="4.{m}""#);
     }
-    for m in minor + 1..=max {
-        println!(r#"cargo:rustc-cfg=before_api="{major}.{m}""#);
+    for m in minor + 1..=upcoming_minor {
+        println!(r#"cargo:rustc-cfg=before_api="4.{m}""#);
     }
 
     // The below configuration keys are very rarely needed and should generally not be used.
-    println!(r#"cargo:rustc-cfg=gdextension_minor_api="{major}.{minor}""#);
-
-    // Godot drops the patch version if it is 0.
-    if patch != 0 {
-        println!(r#"cargo:rustc-cfg=gdextension_exact_api="{major}.{minor}.{patch}""#);
-    } else {
-        println!(r#"cargo:rustc-cfg=gdextension_exact_api="{major}.{minor}""#);
+    // Emit #[cfg]s since/before for patch level.
+    for (_, m, p) in all_versions.iter().copied() {
+        if (m, p) >= (minor, patch) {
+            println!(r#"cargo:rustc-cfg=since_patch_api="4.{m}.{p}""#);
+        } else {
+            println!(r#"cargo:rustc-cfg=before_patch_api="4.{m}.{p}""#);
+        }
     }
 }
 
 // Function for safely removal of build directory. Workaround for errors happening during CI builds:
 // https://github.com/godot-rust/gdext/issues/616
-pub fn remove_dir_all_reliable(path: &std::path::Path) {
+pub fn remove_dir_all_reliable(path: &Path) {
     let mut retry_count = 0;
 
     while path.exists() {
@@ -182,4 +190,26 @@ pub fn remove_dir_all_reliable(path: &std::path::Path) {
             }
         }
     }
+}
+
+// Duplicates code from `make_gdext_build_struct` in `godot-codegen/generator/gdext_build_struct.rs`.
+pub fn before_api(major_minor: &str) -> bool {
+    let mut parts = major_minor.split('.');
+    let queried_major = parts
+        .next()
+        .unwrap()
+        .parse::<u8>()
+        .expect("invalid major version");
+    let queried_minor = parts
+        .next()
+        .unwrap()
+        .parse::<u8>()
+        .expect("invalid minor version");
+    assert_eq!(queried_major, 4, "major version must be 4");
+    let godot_version = get_godot_version();
+    godot_version.minor < queried_minor
+}
+
+pub fn since_api(major_minor: &str) -> bool {
+    !before_api(major_minor)
 }

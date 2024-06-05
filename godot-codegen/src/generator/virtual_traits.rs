@@ -19,12 +19,13 @@ pub fn make_virtual_methods_trait(
     all_base_names: &[TyName],
     trait_name_str: &str,
     notification_enum_name: &Ident,
+    cfg_attributes: &TokenStream,
     view: &ApiView,
 ) -> TokenStream {
     let trait_name = ident(trait_name_str);
 
     let virtual_method_fns = make_all_virtual_methods(class, all_base_names, view);
-    let special_virtual_methods = special_virtual_methods(notification_enum_name);
+    let special_virtual_methods = make_special_virtual_methods(notification_enum_name);
 
     let trait_doc = docs::make_virtual_trait_doc(trait_name_str, class.name());
 
@@ -32,6 +33,7 @@ pub fn make_virtual_methods_trait(
         #[doc = #trait_doc]
         #[allow(unused_variables)]
         #[allow(clippy::unimplemented)]
+        #cfg_attributes
         pub trait #trait_name: crate::obj::GodotClass + crate::private::You_forgot_the_attribute__godot_api {
             #special_virtual_methods
             #( #virtual_method_fns )*
@@ -42,7 +44,7 @@ pub fn make_virtual_methods_trait(
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Implementation
 
-fn special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
+fn make_special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
     quote! {
         #[doc(hidden)]
         fn register_class(builder: &mut crate::builder::ClassBuilder<Self>) {
@@ -74,7 +76,7 @@ fn special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
         /// to represent integers out of known constants (mistakes or future additions).
         ///
         /// This method is named `_notification` in Godot, but `on_notification` in Rust. To _send_ notifications, use the
-        /// [`Object::notify`][crate::engine::Object::notify] method.
+        /// [`Object::notify`][crate::classes::Object::notify] method.
         ///
         /// See also in Godot docs:
         /// * [`Object::_notification`](https://docs.godotengine.org/en/stable/classes/class_object.html#class-object-method-notification).
@@ -83,7 +85,7 @@ fn special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
             unimplemented!()
         }
 
-        /// Called whenever [`get()`](crate::engine::Object::get) is called or Godot gets the value of a property.
+        /// Called whenever [`get()`](crate::classes::Object::get) is called or Godot gets the value of a property.
         ///
         /// Should return the given `property`'s value as `Some(value)`, or `None` if the property should be handled normally.
         ///
@@ -93,7 +95,7 @@ fn special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
             unimplemented!()
         }
 
-        /// Called whenever Godot [`set()`](crate::engine::Object::set) is called or Godot sets the value of a property.
+        /// Called whenever Godot [`set()`](crate::classes::Object::set) is called or Godot sets the value of a property.
         ///
         /// Should set `property` to the given `value` and return `true`, or return `false` to indicate the `property`
         /// should be handled normally.
@@ -104,6 +106,34 @@ fn special_virtual_methods(notification_enum_name: &Ident) -> TokenStream {
             unimplemented!()
         }
 
+        /// Called whenever Godot [`get_property_list()`](crate::classes::Object::get_property_list) is called, the returned vector here is
+        /// appended to the existing list of properties.
+        ///
+        /// This should mainly be used for advanced purposes, such as dynamically updating the property list in the editor.
+        ///
+        /// See also in Godot docs:
+        /// * [`Object::_get_property_list`](https://docs.godotengine.org/en/latest/classes/class_object.html#class-object-private-method-get-property-list)
+        #[cfg(since_api = "4.3")]
+        fn get_property_list(&mut self) -> Vec<crate::meta::PropertyInfo> {
+            unimplemented!()
+        }
+
+        /// Called by Godot to tell if a property has a custom revert or not.
+        ///
+        /// Return `None` for no custom revert, and return `Some(value)` to specify the custom revert.
+        ///
+        /// This is a combination of Godot's [`Object::_property_get_revert`] and [`Object::_property_can_revert`]. This means that this
+        /// function will usually be called twice by Godot to find the revert.
+        ///
+        /// Note that this should be a _pure_ function. That is, it should always return the same value for a property as long as `self`
+        /// remains unchanged. Otherwise this may lead to unexpected (safe) behavior.
+        ///
+        /// [`Object::_property_get_revert`]: https://docs.godotengine.org/en/latest/classes/class_object.html#class-object-private-method-property-get-revert
+        /// [`Object::_property_can_revert`]: https://docs.godotengine.org/en/latest/classes/class_object.html#class-object-private-method-property-can-revert
+        #[doc(alias = "property_can_revert")]
+        fn property_get_revert(&self, property: StringName) -> Option<Variant> {
+            unimplemented!()
+        }
     }
 }
 
@@ -125,6 +155,7 @@ fn make_virtual_method(method: &ClassMethod) -> Option<TokenStream> {
             ptrcall_invocation: TokenStream::new(),
         },
         None,
+        &TokenStream::new(),
     );
 
     // Virtual methods have no builders.

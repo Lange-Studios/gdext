@@ -7,7 +7,7 @@
 
 use crate::framework::itest;
 use godot::builtin::Vector2;
-use godot::engine::translate::{tr, tr_n};
+use godot::tools::{tr, tr_n};
 
 #[itest]
 fn tr_macro_format() {

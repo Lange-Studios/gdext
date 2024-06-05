@@ -8,9 +8,9 @@
 use crate::framework::itest;
 
 use godot::builtin::{Rect2, Rid, Variant};
-use godot::engine::native::{AudioFrame, CaretInfo, Glyph, ObjectId};
-use godot::engine::text_server::Direction;
-use godot::engine::{ITextServerExtension, TextServer, TextServerExtension};
+use godot::classes::native::{AudioFrame, CaretInfo, Glyph, ObjectId};
+use godot::classes::text_server::Direction;
+use godot::classes::{ITextServerExtension, TextServer, TextServerExtension};
 use godot::obj::{Base, NewGd};
 use godot::register::{godot_api, GodotClass};
 
@@ -137,8 +137,8 @@ fn test_native_structure_pointer_to_array_parameter() {
 
     // Check the result array.
     assert_eq!(result.len(), 2);
-    assert_eq!(result.get(0).get("start"), Some(Variant::from(99)));
-    assert_eq!(result.get(1).get("start"), Some(Variant::from(700)));
+    assert_eq!(result.at(0).get("start"), Some(Variant::from(99)));
+    assert_eq!(result.at(1).get("start"), Some(Variant::from(700)));
 }
 
 #[itest]

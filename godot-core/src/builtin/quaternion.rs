@@ -10,11 +10,11 @@ use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{ApproxEq, FloatExt, GlamConv, GlamType};
 use crate::builtin::{inner, real, Basis, EulerOrder, RQuat, RealConv, Vector3};
-
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use super::meta::impl_godot_as_self;
-
+/// Unit quaternion to represent 3D rotations.
+///
+/// See also [`Quaternion`](https://docs.godotengine.org/en/stable/classes/class_quaternion.html) in the Godot documentation.
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -281,13 +281,13 @@ impl Mul<Quaternion> for Quaternion {
 // This type is represented as `Self` in Godot, so `*mut Self` is sound.
 unsafe impl GodotFfi for Quaternion {
     fn variant_type() -> sys::VariantType {
-        sys::VariantType::Quaternion
+        sys::VariantType::QUATERNION
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
 }
 
-impl_godot_as_self!(Quaternion);
+crate::meta::impl_godot_as_self!(Quaternion);
 
 impl std::fmt::Display for Quaternion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

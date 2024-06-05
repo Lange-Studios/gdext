@@ -9,14 +9,33 @@ categories = ["game-engines", "graphics"]
 
 [features]
 default = ["codegen-full"]
-custom-godot = ["godot-core/custom-godot"]
+custom-godot = ["api-custom"]
 double-precision = ["godot-core/double-precision"]
-formatted = ["godot-core/codegen-fmt"]
-serde = ["godot-core/serde"]
-lazy-function-tables = ["godot-core/codegen-lazy-fptrs"]
-experimental-threads = ["godot-core/experimental-threads"]
 experimental-godot-api = ["godot-core/experimental-godot-api"]
+experimental-threads = ["godot-core/experimental-threads"]
 experimental-wasm = []
+formatted = ["godot-core/codegen-fmt"]
+lazy-function-tables = ["godot-core/codegen-lazy-fptrs"]
+serde = ["godot-core/serde"]
+
+api-custom = ["godot-core/api-custom"]
+# [version-sync] [[
+#  [line] api-$kebabVersion = ["godot-core/api-$kebabVersion"]
+api-4-0 = ["godot-core/api-4-0"]
+api-4-0-1 = ["godot-core/api-4-0-1"]
+api-4-0-2 = ["godot-core/api-4-0-2"]
+api-4-0-3 = ["godot-core/api-4-0-3"]
+api-4-0-4 = ["godot-core/api-4-0-4"]
+api-4-1 = ["godot-core/api-4-1"]
+api-4-1-1 = ["godot-core/api-4-1-1"]
+api-4-1-2 = ["godot-core/api-4-1-2"]
+api-4-1-3 = ["godot-core/api-4-1-3"]
+api-4-1-4 = ["godot-core/api-4-1-4"]
+api-4-2 = ["godot-core/api-4-2"]
+api-4-2-1 = ["godot-core/api-4-2-1"]
+api-4-2-2 = ["godot-core/api-4-2-2"]
+# ]]
+
 
 # Private features, they are under no stability guarantee
 codegen-full = ["godot-core/codegen-full"]
@@ -26,3 +45,12 @@ trace = ["godot-core/trace"]
 [dependencies]
 godot-core = { path = "../godot-core" }
 godot-macros = { path = "../godot-macros" }
+
+# https://docs.rs/about/metadata
+[package.metadata.docs.rs]
+features = ["experimental-godot-api"]
+rustdoc-args = ["--cfg", "published_docs"]
+
+# Currently causes "unused manifest key" warnings. Maybe re-enable in the future, to make `published_docs` known.
+#[lints.rust]
+#unexpected_cfgs = { level = "warn", check-cfg = ['cfg(published_docs)'] }

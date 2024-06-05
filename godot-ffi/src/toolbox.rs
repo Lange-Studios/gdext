@@ -97,6 +97,7 @@ pub fn force_mut_ptr<T>(ptr: *const T) -> *mut T {
 pub fn to_const_ptr<T>(ptr: *mut T) -> *const T {
     ptr as *const T
 }
+
 /// If `ptr` is not null, returns `Some(mapper(ptr))`; otherwise `None`.
 #[inline]
 pub fn ptr_then<T, R, F>(ptr: *mut T, mapper: F) -> Option<R>
@@ -192,18 +193,10 @@ pub fn unqualified_type_name<T>() -> &'static str {
 /// Needed for `cast_fn_ptr` macro.
 pub(crate) trait Inner: Sized {
     type FnPtr: Sized;
-
-    #[cfg(before_api = "4.1")]
-    fn extract(self, error_msg: &str) -> Self::FnPtr;
 }
 
 impl<T> Inner for Option<T> {
     type FnPtr = T;
-
-    #[cfg(before_api = "4.1")]
-    fn extract(self, error_msg: &str) -> Self::FnPtr {
-        self.expect(error_msg)
-    }
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------

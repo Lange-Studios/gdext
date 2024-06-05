@@ -36,13 +36,29 @@ pub mod virtual_traits;
 // - utility_functions
 // - native_structures
 
+pub fn generate_sys_module_file(sys_gen_path: &Path, submit_fn: &mut SubmitFn) {
+    let code = quote! {
+        pub mod table_builtins;
+        pub mod table_builtins_lifecycle;
+        pub mod table_servers_classes;
+        pub mod table_scene_classes;
+        pub mod table_editor_classes;
+        pub mod table_utilities;
+
+        pub mod central;
+        pub mod gdextension_interface;
+        pub mod interface;
+    };
+
+    submit_fn(sys_gen_path.join("mod.rs"), code);
+}
+
 pub fn generate_sys_central_file(
     api: &ExtensionApi,
-    ctx: &mut Context,
     sys_gen_path: &Path,
     submit_fn: &mut SubmitFn,
 ) {
-    let sys_code = central_files::make_sys_central_code(api, ctx);
+    let sys_code = central_files::make_sys_central_code(api);
 
     submit_fn(sys_gen_path.join("central.rs"), sys_code);
 }

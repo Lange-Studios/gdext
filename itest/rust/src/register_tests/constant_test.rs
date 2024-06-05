@@ -9,7 +9,7 @@
 #![allow(clippy::non_minimal_cfg)]
 
 use crate::framework::itest;
-use godot::engine::ClassDb;
+use godot::classes::ClassDb;
 use godot::prelude::*;
 use godot::sys::static_assert;
 
@@ -89,7 +89,7 @@ fn constants_correct_value() {
         .done();
 
     for (constant_name, constant_value) in CONSTANTS {
-        assert!(constants.contains(constant_name.into()));
+        assert!(constants.contains(&constant_name.into()));
         assert_eq!(
             ClassDb::singleton().class_get_integer_constant(
                 HasConstants::class_name().to_string_name(),
@@ -135,7 +135,7 @@ impl HasOtherConstants {
 impl godot::obj::cap::ImplementsGodotApi for HasOtherConstants {
     fn __register_methods() {}
     fn __register_constants() {
-        use ::godot::builtin::meta::registration::constant::*;
+        use ::godot::register::private::constant::*;
         // Try exporting an enum.
         ExportConstant::new(
             HasOtherConstants::class_name(),
@@ -216,11 +216,11 @@ macro_rules! test_enum_export {
                 .done();
 
             for (variant_name, variant_value) in variants {
-                assert!(godot_variants.contains(variant_name.into()));
-                assert!(constants.contains(variant_name.into()));
+                let variant_name = GString::from(variant_name);
+                assert!(godot_variants.contains(&variant_name));
+                assert!(constants.contains(&variant_name));
                 assert_eq!(
-                    ClassDb::singleton()
-                        .class_get_integer_constant(class_name.to_string_name(), variant_name.into()),
+                    ClassDb::singleton().class_get_integer_constant(class_name.to_string_name(), variant_name.into()),
                     variant_value
                 );
             }

@@ -7,13 +7,11 @@
 
 use std::ffi::c_void;
 
-use godot::builtin::meta::{ClassName, FromGodot, MethodInfo, PropertyInfo, ToGodot};
 use godot::builtin::{GString, StringName, Variant, VariantType};
-use godot::engine::global::{MethodFlags, PropertyHint, PropertyUsageFlags};
-use godot::engine::{
-    create_script_instance, IScriptExtension, Object, Script, ScriptExtension, ScriptInstance,
-    ScriptLanguage,
-};
+use godot::classes::{IScriptExtension, Object, Script, ScriptExtension, ScriptLanguage};
+use godot::global::{MethodFlags, PropertyHint, PropertyUsageFlags};
+use godot::meta::{ClassName, FromGodot, MethodInfo, PropertyInfo, ToGodot};
+use godot::obj::script::{create_script_instance, ScriptInstance, SiMut};
 use godot::obj::{Base, Gd, WithBaseField};
 use godot::register::{godot_api, GodotClass};
 use godot::sys;
@@ -26,12 +24,12 @@ struct TestScript {
 
 #[godot_api]
 impl IScriptExtension for TestScript {
-    unsafe fn instance_create(&self, _for_object: Gd<Object>) -> *mut c_void {
-        create_script_instance(TestScriptInstance::new(self.to_gd().upcast()))
-    }
-
     fn can_instantiate(&self) -> bool {
         true
+    }
+
+    unsafe fn instance_create(&self, for_object: Gd<Object>) -> *mut c_void {
+        create_script_instance(TestScriptInstance::new(self.to_gd().upcast()), for_object)
     }
 }
 
@@ -49,7 +47,7 @@ impl TestScriptInstance {
             script,
             script_property_b: false,
             prop_list: vec![PropertyInfo {
-                variant_type: VariantType::Int,
+                variant_type: VariantType::INT,
                 property_name: StringName::from("script_property_a"),
                 class_name: ClassName::from_ascii_cstr("\0".as_bytes()),
                 hint: PropertyHint::NONE,
@@ -62,7 +60,7 @@ impl TestScriptInstance {
                 method_name: StringName::from("script_method_a"),
                 class_name: ClassName::from_ascii_cstr("TestScript\0".as_bytes()),
                 return_type: PropertyInfo {
-                    variant_type: VariantType::String,
+                    variant_type: VariantType::STRING,
                     class_name: ClassName::none(),
                     property_name: StringName::from(""),
                     hint: PropertyHint::NONE,
@@ -71,7 +69,7 @@ impl TestScriptInstance {
                 },
                 arguments: vec![
                     PropertyInfo {
-                        variant_type: VariantType::String,
+                        variant_type: VariantType::STRING,
                         class_name: ClassName::none(),
                         property_name: StringName::from(""),
                         hint: PropertyHint::NONE,
@@ -79,7 +77,7 @@ impl TestScriptInstance {
                         usage: PropertyUsageFlags::NONE,
                     },
                     PropertyInfo {
-                        variant_type: VariantType::Int,
+                        variant_type: VariantType::INT,
                         class_name: ClassName::none(),
                         property_name: StringName::from(""),
                         hint: PropertyHint::NONE,
@@ -92,16 +90,28 @@ impl TestScriptInstance {
             }],
         }
     }
+
+    /// Method of the test script and will be called during test runs.
+    fn script_method_a(&self, arg_a: GString, arg_b: i32) -> String {
+        format!("{arg_a}{arg_b}")
+    }
+
+    fn script_method_toggle_property_b(&mut self) -> bool {
+        self.script_property_b = !self.script_property_b;
+        true
+    }
 }
 
 impl ScriptInstance for TestScriptInstance {
+    type Base = Object;
+
     fn class_name(&self) -> GString {
         GString::from("TestScript")
     }
 
-    fn set_property(&mut self, name: StringName, value: &Variant) -> bool {
+    fn set_property(mut this: SiMut<Self>, name: StringName, value: &Variant) -> bool {
         if name.to_string() == "script_property_b" {
-            self.script_property_b = FromGodot::from_variant(value);
+            this.script_property_b = FromGodot::from_variant(value);
             true
         } else {
             false
@@ -125,7 +135,7 @@ impl ScriptInstance for TestScriptInstance {
     }
 
     fn call(
-        &mut self,
+        mut this: SiMut<Self>,
         method: StringName,
         args: &[&Variant],
     ) -> Result<Variant, sys::GDExtensionCallErrorType> {
@@ -134,7 +144,20 @@ impl ScriptInstance for TestScriptInstance {
                 let arg_a = args[0].to::<GString>();
                 let arg_b = args[1].to::<i32>();
 
-                Ok(format!("{arg_a}{arg_b}").to_variant())
+                Ok(this.script_method_a(arg_a, arg_b).to_variant())
+            }
+
+            "script_method_toggle_property_b" => {
+                let result = this.script_method_toggle_property_b();
+
+                Ok(result.to_variant())
+            }
+
+            "script_method_re_entering" => {
+                let mut base = this.base_mut();
+                let result = base.call("script_method_toggle_property_b".into(), &[]);
+
+                Ok(result)
             }
 
             _ => Err(sys::GDEXTENSION_CALL_ERROR_INVALID_METHOD),
@@ -155,8 +178,8 @@ impl ScriptInstance for TestScriptInstance {
 
     fn get_property_type(&self, name: StringName) -> VariantType {
         match name.to_string().as_str() {
-            "script_property_a" => VariantType::Int,
-            _ => VariantType::Nil,
+            "script_property_a" => VariantType::INT,
+            _ => VariantType::NIL,
         }
     }
 
@@ -182,7 +205,7 @@ impl ScriptInstance for TestScriptInstance {
         None
     }
 
-    fn property_set_fallback(&mut self, _name: StringName, _value: &Variant) -> bool {
+    fn property_set_fallback(_this: SiMut<Self>, _name: StringName, _value: &Variant) -> bool {
         false
     }
 }

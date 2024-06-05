@@ -37,7 +37,7 @@ pub fn is_class_method_deleted(class_name: &TyName, method: &JsonClassMethod, ct
     }
     
     match (class_name.godot_ty.as_str(), method.name.as_str()) {
-        // Already covered by manual APIs
+        // Already covered by manual APIs.
         //| ("Object", "to_string")
         | ("Object", "get_instance_id")
         
@@ -135,7 +135,7 @@ pub fn is_godot_type_deleted(godot_ty: &str) -> bool {
 }
 
 #[rustfmt::skip]
-fn is_class_experimental(godot_class_name: &str) -> bool {
+pub fn is_class_experimental(godot_class_name: &str) -> bool {
     // Note: parameter can be a class or builtin name, but also something like "enum::AESContext.Mode".
 
     // These classes are currently hardcoded, but the information is available in Godot's doc/classes directory.
@@ -280,8 +280,15 @@ pub fn is_builtin_type_scalar(name: &str) -> bool {
     name.chars().next().unwrap().is_ascii_lowercase()
 }
 
+#[rustfmt::skip]
 pub fn is_utility_function_deleted(function: &JsonUtilityFunction, ctx: &mut Context) -> bool {
-    codegen_special_cases::is_utility_function_excluded(function, ctx)
+    /*let hardcoded = match function.name.as_str() {
+        | "..."
+
+        => true, _ => false
+    };
+
+    hardcoded ||*/ codegen_special_cases::is_utility_function_excluded(function, ctx)
 }
 
 pub fn maybe_rename_class_method<'m>(class_name: &TyName, godot_method_name: &'m str) -> &'m str {
@@ -305,10 +312,10 @@ pub fn maybe_rename_virtual_method(rust_method_name: &str) -> &str {
 pub fn get_class_extra_docs(class_name: &TyName) -> Option<&'static str> {
     match class_name.godot_ty.as_str() {
         "FileAccess" => {
-            Some("The gdext library provides a higher-level abstraction, which should be preferred: [`GFile`][crate::engine::GFile].")
+            Some("The gdext library provides a higher-level abstraction, which should be preferred: [`GFile`][crate::tools::GFile].")
         }
         "ScriptExtension" => {
-            Some("Use this in combination with [`ScriptInstance`][crate::engine::ScriptInstance].")
+            Some("Use this in combination with the [`obj::script` module][crate::obj::script].")
         }
 
         _ => None,
@@ -318,7 +325,7 @@ pub fn get_class_extra_docs(class_name: &TyName) -> Option<&'static str> {
 pub fn get_interface_extra_docs(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         "IScriptExtension" => {
-            Some("Use this in combination with [`ScriptInstance`][crate::engine::ScriptInstance].")
+            Some("Use this in combination with the [`obj::script` module][crate::obj::script].")
         }
 
         _ => None,
@@ -350,6 +357,45 @@ pub fn is_class_level_server(class_name: &str) -> bool {
         | "PhysicsServer3D" | "PhysicsServer3DExtension" 
         | "PhysicsServer3DManager" 
         | "PhysicsServer3DRenderingServerHandler"
+
+        => true, _ => false
+    }
+}
+
+/// Whether a generated enum is `pub(crate)`; useful for manual re-exports.
+#[rustfmt::skip]
+pub fn is_enum_private(class_name: Option<&TyName>, enum_name: &str) -> bool {
+    match (class_name, enum_name) {
+        // Re-exported to godot::builtin.
+        | (None, "Corner")
+        | (None, "EulerOrder")
+        | (None, "Side")
+        | (None, "Variant.Operator")
+        | (None, "Variant.Type")
+
+        => true, _ => false
+    }
+}
+
+/// Certain enums that are extremely unlikely to get new identifiers in the future.
+/// 
+/// `class_name` = None for global enums.
+/// 
+/// Very conservative, only includes a few enums. Even `VariantType` was extended over time.
+/// Also does not work for any enums containing duplicate ordinals.
+#[rustfmt::skip]
+pub fn is_enum_exhaustive(class_name: Option<&TyName>, enum_name: &str) -> bool {
+    // Adding new enums here should generally not break existing code:
+    // * match _ patterns are still allowed, but cause a warning
+    // * Enum::CONSTANT access looks the same for proper enum and newtype+const
+    // Obviously, removing them will.
+
+    match (class_name, enum_name) {
+        | (None, "ClockDirection")
+        | (None, "Corner")
+        | (None, "EulerOrder")
+        | (None, "Side")
+        | (None, "Orientation")
 
         => true, _ => false
     }

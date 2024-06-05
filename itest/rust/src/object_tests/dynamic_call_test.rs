@@ -5,9 +5,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use godot::builtin::meta::{CallError, FromGodot, ToGodot};
 use godot::builtin::{StringName, Variant, Vector3};
-use godot::engine::{Node, Node3D, Object};
+use godot::classes::{Node, Node3D, Object};
+use godot::meta::error::CallError;
+use godot::meta::{FromGodot, ToGodot};
 use godot::obj::{InstanceId, NewAlloc};
 use std::error::Error;
 
@@ -135,7 +136,7 @@ fn dynamic_call_parameter_mismatch() {
         "godot-rust function call failed: Object::call(&\"take_1_int\", [va] \"string\")\
         \n  Source: ObjPayload::take_1_int()\
         \n    Reason: parameter #0 (i64) conversion\
-        \n  Source: expected type Int, got String: \"string\""
+        \n  Source: expected type INT, got STRING: \"string\""
     );
 
     obj.free();
@@ -256,7 +257,7 @@ fn dynamic_call_parameter_mismatch_engine() {
     assert_eq!(
         call_error.to_string(),
         "godot-rust function call failed: Object::call(&\"set_name\", [va] 123)\
-        \n    Reason: parameter #1 conversion -- expected type String, got Int"
+        \n    Reason: parameter #1 conversion -- expected type STRING, got INT"
     );
 
     node.free();

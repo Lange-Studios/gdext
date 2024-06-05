@@ -12,17 +12,17 @@ use godot_ffi as sys;
 
 use sys::{static_assert_eq_size_align, VariantType};
 
-use crate::builtin::meta::{
-    ArrayElement, CallContext, ConvertError, FromFfiError, FromGodot, GodotConvert, GodotType,
-    ToGodot,
-};
 use crate::builtin::{Callable, NodePath, StringName, Variant};
+use crate::global::PropertyHint;
+use crate::meta::error::{ConvertError, FromFfiError};
+use crate::meta::{ArrayElement, CallContext, FromGodot, GodotConvert, GodotType, ToGodot};
 use crate::obj::raw::RawGd;
 use crate::obj::{
     bounds, cap, Bounds, EngineEnum, GdDerefTarget, GdMut, GdRef, GodotClass, Inherits, InstanceId,
 };
-use crate::property::{Export, PropertyHintInfo, TypeStringHint, Var};
-use crate::{callbacks, engine, out};
+use crate::private::callbacks;
+use crate::registry::property::{Export, PropertyHintInfo, TypeStringHint, Var};
+use crate::{classes, out};
 
 /// Smart pointer to objects owned by the Godot engine.
 ///
@@ -82,8 +82,8 @@ use crate::{callbacks, engine, out};
 /// example if you are inside a `&mut self` method, make a call to GDScript and indirectly call another method on the same object (re-entrancy).
 ///
 /// [book]: https://godot-rust.github.io/book/godot-api/objects.html
-/// [`Object`]: engine::Object
-/// [`RefCounted`]: engine::RefCounted
+/// [`Object`]: classes::Object
+/// [`RefCounted`]: classes::RefCounted
 #[repr(C)] // must be layout compatible with engine classes
 pub struct Gd<T: GodotClass> {
     // Note: `opaque` has the same layout as GDExtensionObjectPtr == Object* in C++, i.e. the bytes represent a pointer
@@ -183,10 +183,10 @@ impl<T: GodotClass> Gd<T> {
     /// If no such instance ID is registered, or if the dynamic type of the object behind that instance ID
     /// is not compatible with `T`, then `None` is returned.
     pub fn try_from_instance_id(instance_id: InstanceId) -> Result<Self, ConvertError> {
-        let ptr = engine::object_ptr_from_id(instance_id);
+        let ptr = classes::object_ptr_from_id(instance_id);
 
         // SAFETY: assumes that the returned GDExtensionObjectPtr is convertible to Object* (i.e. C++ upcast doesn't modify the pointer)
-        let untyped = unsafe { Gd::<engine::Object>::from_obj_sys_or_none(ptr)? };
+        let untyped = unsafe { Gd::<classes::Object>::from_obj_sys_or_none(ptr)? };
         untyped
             .owned_cast::<T>()
             .map_err(|obj| FromFfiError::WrongObjectType.into_error(obj))
@@ -411,7 +411,7 @@ impl<T: GodotClass> Gd<T> {
     #[doc(hidden)]
     pub fn script_sys(&self) -> sys::GDExtensionScriptLanguagePtr
     where
-        T: Inherits<crate::engine::ScriptLanguage>,
+        T: Inherits<classes::ScriptLanguage>,
     {
         self.raw.script_sys()
     }
@@ -553,6 +553,44 @@ where
     }
 }
 
+/// _The methods in this impl block are only available for objects `T` that are reference-counted,
+/// i.e. anything that inherits `RefCounted`._ <br><br>
+impl<T> Gd<T>
+where
+    T: GodotClass + Bounds<Memory = bounds::MemRefCounted>,
+{
+    /// Makes sure that `self` does not share references with other `Gd` instances.
+    ///
+    /// Succeeds if the reference count is 1.
+    /// Otherwise, returns the shared object and its reference count.
+    ///
+    /// ## Example
+    ///
+    /// ```no_run
+    /// use godot::prelude::*;
+    ///
+    /// let obj = RefCounted::new_gd();
+    /// match obj.try_to_unique() {
+    ///    Ok(unique_obj) => {
+    ///        // No other Gd<T> shares a reference with `unique_obj`.
+    ///    },
+    ///    Err((shared_obj, ref_count)) => {
+    ///        // `shared_obj` is the original object `obj`.
+    ///        // `ref_count` is the total number of references (including one held by `shared_obj`).
+    ///    }
+    /// }
+    /// ```
+    pub fn try_to_unique(self) -> Result<Self, (Self, usize)> {
+        use crate::obj::bounds::DynMemory as _;
+
+        match <T as Bounds>::DynMemory::get_ref_count(&self.raw) {
+            Some(1) => Ok(self),
+            Some(ref_count) => Err((self, ref_count)),
+            None => unreachable!(),
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Trait impls
 
@@ -597,7 +635,7 @@ impl<T: GodotClass> GodotType for Gd<T> {
         }
     }
 
-    fn class_name() -> crate::builtin::meta::ClassName {
+    fn class_name() -> crate::meta::ClassName {
         T::class_name()
     }
 
@@ -649,18 +687,18 @@ impl<T: GodotClass> Clone for Gd<T> {
 
 impl<T: GodotClass> TypeStringHint for Gd<T> {
     fn type_string() -> String {
-        use engine::global::PropertyHint;
+        use crate::global::PropertyHint;
 
         match Self::default_export_info().hint {
             hint @ (PropertyHint::RESOURCE_TYPE | PropertyHint::NODE_TYPE) => {
                 format!(
                     "{}/{}:{}",
-                    VariantType::Object as i32,
+                    VariantType::OBJECT.ord(),
                     hint.ord(),
                     T::class_name()
                 )
             }
-            _ => format!("{}:", VariantType::Object as i32),
+            _ => format!("{}:", VariantType::OBJECT.ord()),
         }
     }
 }
@@ -679,12 +717,12 @@ impl<T: GodotClass> Var for Gd<T> {
 
 impl<T: GodotClass> Export for Gd<T> {
     fn default_export_info() -> PropertyHintInfo {
-        let hint = if T::inherits::<engine::Resource>() {
-            engine::global::PropertyHint::RESOURCE_TYPE
-        } else if T::inherits::<engine::Node>() {
-            engine::global::PropertyHint::NODE_TYPE
+        let hint = if T::inherits::<classes::Resource>() {
+            PropertyHint::RESOURCE_TYPE
+        } else if T::inherits::<classes::Node>() {
+            PropertyHint::NODE_TYPE
         } else {
-            engine::global::PropertyHint::NONE
+            PropertyHint::NONE
         };
 
         // Godot does this by default too; the hint is needed when the class is a resource/node,
@@ -712,13 +750,13 @@ impl<T: GodotClass> Eq for Gd<T> {}
 
 impl<T: GodotClass> Display for Gd<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        engine::display_string(self, f)
+        classes::display_string(self, f)
     }
 }
 
 impl<T: GodotClass> Debug for Gd<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        engine::debug_string(self, f, "Gd")
+        classes::debug_string(self, f, "Gd")
     }
 }
 
@@ -737,83 +775,5 @@ impl<T: GodotClass> std::hash::Hash for Gd<T> {
 impl<T: GodotClass> std::panic::UnwindSafe for Gd<T> {}
 impl<T: GodotClass> std::panic::RefUnwindSafe for Gd<T> {}
 
-/// Error stemming from the non-uniqueness of the [`Gd`] instance.
-///
-/// Keeping track of the uniqueness of references can be crucial in many applications, especially if we want to ensure
-/// that the passed [`Gd`] reference will be possessed by only one different object instance or function in its lifetime.
-///
-/// Only applicable to [`GodotClass`] objects that inherit from [`RefCounted`](crate::gen::classes::RefCounted). To check the
-/// uniqueness, call the `check()` associated method.
-///
-/// ## Example
-///
-/// ```no_run
-/// use godot::prelude::*;
-/// use godot::obj::NotUniqueError;
-///
-/// let shared = RefCounted::new_gd();
-/// let cloned = shared.clone();
-/// let result = NotUniqueError::check(shared);
-///
-/// assert!(result.is_err());
-///
-/// if let Err(error) = result {
-///     assert_eq!(error.get_reference_count(), 2)
-/// }
-/// ```
-#[derive(Debug)]
-pub struct NotUniqueError {
-    reference_count: i32,
-}
-
-impl NotUniqueError {
-    /// check [`Gd`] reference uniqueness.
-    ///
-    /// Checks the [`Gd`] of the [`GodotClass`](crate::obj::GodotClass) that inherits from [`RefCounted`](crate::gen::classes::RefCounted)
-    /// if it is an unique reference to the object.
-    ///
-    /// ## Example
-    ///
-    /// ```no_run
-    /// use godot::prelude::*;
-    /// use godot::obj::NotUniqueError;
-    ///
-    /// let unique = RefCounted::new_gd();
-    /// assert!(NotUniqueError::check(unique).is_ok());
-    ///
-    /// let shared = RefCounted::new_gd();
-    /// let cloned = shared.clone();
-    /// assert!(NotUniqueError::check(shared).is_err());
-    /// assert!(NotUniqueError::check(cloned).is_err());
-    /// ```
-    pub fn check<T>(rc: Gd<T>) -> Result<Gd<T>, Self>
-    where
-        T: Inherits<crate::gen::classes::RefCounted>,
-    {
-        let rc = rc.upcast::<crate::gen::classes::RefCounted>();
-        let reference_count = rc.get_reference_count();
-
-        if reference_count != 1 {
-            Err(Self { reference_count })
-        } else {
-            Ok(rc.cast::<T>())
-        }
-    }
-
-    /// Get the detected reference count
-    pub fn get_reference_count(&self) -> i32 {
-        self.reference_count
-    }
-}
-
-impl std::error::Error for NotUniqueError {}
-
-impl std::fmt::Display for NotUniqueError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "pointer is not unique, current reference count: {}",
-            self.reference_count
-        )
-    }
-}
+#[deprecated = "Removed; see `Gd::try_to_unique()`"]
+pub type NotUniqueError = ();

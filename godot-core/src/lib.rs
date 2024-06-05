@@ -5,40 +5,23 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-mod registry;
-mod storage;
-
+// Note that a lot of those are public, but the godot crate still has the final say on what it wants to re-export.
+// Doing fine-grained visibility restrictions on every level is a useless maintenance chore.
 pub mod builder;
 pub mod builtin;
+pub mod classes;
+pub mod global;
 pub mod init;
-pub mod log;
+pub mod meta;
 pub mod obj;
-pub mod property;
+pub mod registry;
+pub mod tools;
 
-#[doc(hidden)]
-#[path = "deprecated.rs"]
-pub mod __deprecated;
-#[doc(hidden)]
-pub mod private;
-
+mod storage;
 pub use godot_ffi as sys;
-#[doc(hidden)]
-pub use godot_ffi::out;
-pub use registry::*;
 
-/// Maps the Godot class API to Rust.
-///
-/// This module contains the following symbols:
-/// * Classes: `CanvasItem`, etc.
-/// * Virtual traits: `ICanvasItem`, etc.
-/// * Enum/flag modules: `canvas_item`, etc.
-///
-/// Noteworthy sub-modules are:
-/// * [`notify`][crate::engine::notify]: all notification types, used when working with the virtual callback to handle lifecycle notifications.
-/// * [`global`][crate::engine::global]: global enums not belonging to a specific class.
-/// * [`utilities`][crate::engine::utilities]: utility methods that are global in Godot.
-/// * [`translate`][crate::engine::translate]: convenience macros for translation.
-pub mod engine;
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// Generated code
 
 // Output of generated code. Mimics the file structure, symbols are re-exported.
 #[rustfmt::skip]
@@ -48,44 +31,35 @@ pub mod engine;
 #[allow(clippy::wrong_self_convention)] // to_string() is const
 #[allow(clippy::upper_case_acronyms)] // TODO remove this line once we transform names
 #[allow(unreachable_code, clippy::unimplemented)] // TODO remove once #153 is implemented
-mod gen;
-
-
-
-macro_rules! generate_gdextension_api_version {
-    (
-        $(
-            ($name:ident, $gdextension_api:ident) => {
-                $($version:literal, )*
-            }
-        ),* $(,)?
-    ) => {
-        $(
-            $(
-                #[cfg($gdextension_api = $version)]
-                #[allow(dead_code)]
-                const $name: &str = $version;
-            )*
-        )*
-    };
+mod gen {
+    include!(concat!(env!("OUT_DIR"), "/mod.rs"));
 }
 
-// If multiple gdextension_api_version's are found then this will generate several structs with the same
-// name, causing a compile error.
-//
-// This includes all versions we're developing for, including unreleased future versions.
-generate_gdextension_api_version!(
-    (GDEXTENSION_EXACT_API, gdextension_exact_api) => {
-        "4.0",
-        "4.0.1",
-        "4.0.2",
-        "4.0.3",
-        "4.0.4",
-        "4.1",
-        "4.1.1",
-    },
-    (GDEXTENSION_API, gdextension_minor_api) => {
-        "4.0",
-        "4.1",
-    },
-);
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// Hidden but accessible symbols
+
+/// Module which is used for deprecated warnings. It stays even if there is nothing currently deprecated.
+#[doc(hidden)]
+#[path = "deprecated.rs"]
+pub mod __deprecated;
+
+/// All internal machinery that is accessed by various gdext tools (e.g. proc macros).
+#[doc(hidden)]
+pub mod private;
+
+/// Re-export logging macro.
+#[doc(hidden)]
+pub use godot_ffi::out;
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// Deprecated modules
+
+#[deprecated = "Module has been split into `godot::classes`, `godot::global` and `godot::tools`."]
+pub mod engine;
+
+#[deprecated = "Print macros have been moved to `godot::global`."]
+pub mod log {
+    pub use crate::global::{
+        godot_error, godot_print, godot_print_rich, godot_script_error, godot_warn,
+    };
+}

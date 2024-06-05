@@ -9,19 +9,19 @@
 
 use crate::framework::{itest, TestContext};
 
-use godot::builtin::meta::ToGodot;
 use godot::builtin::{
     real, varray, Color, GString, PackedByteArray, PackedColorArray, PackedFloat32Array,
     PackedInt32Array, PackedStringArray, PackedVector2Array, PackedVector3Array, RealConv,
     StringName, Variant, VariantArray, Vector2, Vector3,
 };
-use godot::engine::notify::NodeNotification;
-use godot::engine::resource_loader::CacheMode;
-use godot::engine::{
+use godot::classes::notify::NodeNotification;
+use godot::classes::resource_loader::CacheMode;
+use godot::classes::{
     BoxMesh, INode, INode2D, IPrimitiveMesh, IRefCounted, IResourceFormatLoader, IRigidBody2D,
     InputEvent, InputEventAction, Node, Node2D, PrimitiveMesh, RefCounted, ResourceFormatLoader,
     ResourceLoader, Viewport, Window,
 };
+use godot::meta::ToGodot;
 use godot::obj::{Base, Gd, NewAlloc, NewGd};
 use godot::private::class_macros::assert_eq_approx;
 use godot::register::{godot_api, GodotClass};
@@ -282,6 +282,36 @@ impl IRefCounted for SetTest {
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
+#[derive(GodotClass)]
+#[class(init)]
+struct RevertTest {}
+
+#[godot_api]
+impl IRefCounted for RevertTest {
+    fn property_get_revert(&self, property: StringName) -> Option<Variant> {
+        use std::sync::atomic::AtomicUsize;
+
+        static INC: AtomicUsize = AtomicUsize::new(0);
+
+        match String::from(property).as_str() {
+            "property_not_revert" => None,
+            "property_do_revert" => Some(GString::from("hello!").to_variant()),
+            // No UB or anything else like a crash or panic should happen when `property_can_revert` and `property_get_revert` return
+            // inconsistent values, but in case something like that happens we should be able to detect it through this function.
+            "property_changes" => {
+                if INC.fetch_add(1, std::sync::atomic::Ordering::AcqRel) % 2 == 0 {
+                    None
+                } else {
+                    Some(true.to_variant())
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
 #[itest]
 fn test_to_string() {
     let _obj = VirtualMethodTest::new_gd();
@@ -381,28 +411,28 @@ fn test_virtual_method_with_return() {
     assert_eq!(arr.len(), arr_rust.len());
     // can't just assert_eq because the values of some floats change slightly
     assert_eq_approx!(
-        arr.get(0).to::<PackedVector3Array>().get(0),
-        arr_rust.get(0).to::<PackedVector3Array>().get(0),
+        arr.at(0).to::<PackedVector3Array>()[0],
+        arr_rust.at(0).to::<PackedVector3Array>()[0],
     );
     assert_eq_approx!(
-        real::from_f32(arr.get(2).to::<PackedFloat32Array>().get(3)),
-        real::from_f32(arr_rust.get(2).to::<PackedFloat32Array>().get(3)),
+        real::from_f32(arr.at(2).to::<PackedFloat32Array>()[3]),
+        real::from_f32(arr_rust.at(2).to::<PackedFloat32Array>()[3]),
     );
     assert_eq_approx!(
-        arr.get(3).to::<PackedColorArray>().get(0),
-        arr_rust.get(3).to::<PackedColorArray>().get(0),
+        arr.at(3).to::<PackedColorArray>()[0],
+        arr_rust.at(3).to::<PackedColorArray>()[0],
     );
     assert_eq_approx!(
-        arr.get(4).to::<PackedVector2Array>().get(0),
-        arr_rust.get(4).to::<PackedVector2Array>().get(0),
+        arr.at(4).to::<PackedVector2Array>()[0],
+        arr_rust.at(4).to::<PackedVector2Array>()[0],
     );
     assert_eq!(
-        arr.get(6).to::<PackedByteArray>(),
-        arr_rust.get(6).to::<PackedByteArray>(),
+        arr.at(6).to::<PackedByteArray>(),
+        arr_rust.at(6).to::<PackedByteArray>(),
     );
     assert_eq!(
-        arr.get(10).to::<PackedInt32Array>(),
-        arr_rust.get(10).to::<PackedInt32Array>()
+        arr.at(10).to::<PackedInt32Array>(),
+        arr_rust.at(10).to::<PackedInt32Array>()
     );
 }
 
@@ -493,19 +523,19 @@ fn test_input_event_multiple(test_context: &TestContext) {
 fn test_notifications() {
     let obj = NotificationTest::new_alloc();
     let mut node = obj.clone().upcast::<Node>();
-    node.notify(NodeNotification::Unpaused);
-    node.notify(NodeNotification::EditorPostSave);
-    node.notify(NodeNotification::Ready);
-    node.notify_reversed(NodeNotification::WmSizeChanged);
+    node.notify(NodeNotification::UNPAUSED);
+    node.notify(NodeNotification::EDITOR_POST_SAVE);
+    node.notify(NodeNotification::READY);
+    node.notify_reversed(NodeNotification::WM_SIZE_CHANGED);
 
     assert_eq!(
         obj.bind().sequence,
         vec![
-            ReceivedEvent::Notification(NodeNotification::Unpaused),
-            ReceivedEvent::Notification(NodeNotification::EditorPostSave),
+            ReceivedEvent::Notification(NodeNotification::UNPAUSED),
+            ReceivedEvent::Notification(NodeNotification::EDITOR_POST_SAVE),
             ReceivedEvent::Ready,
-            ReceivedEvent::Notification(NodeNotification::Ready),
-            ReceivedEvent::Notification(NodeNotification::WmSizeChanged),
+            ReceivedEvent::Notification(NodeNotification::READY),
+            ReceivedEvent::Notification(NodeNotification::WM_SIZE_CHANGED),
         ]
     );
     obj.free();
@@ -561,6 +591,32 @@ fn test_set_sets_correct() {
     obj.set("settable".into(), 500.to_variant());
     assert_eq!(obj.bind().always_set_to_100, 100);
     assert_eq!(obj.bind().settable, 500);
+}
+
+#[itest]
+fn test_revert() {
+    let revert = RevertTest::new_gd();
+
+    let not_revert = StringName::from("property_not_revert");
+    let do_revert = StringName::from("property_do_revert");
+    let changes = StringName::from("property_changes");
+
+    assert!(!revert.property_can_revert(not_revert.clone()));
+    assert_eq!(revert.property_get_revert(not_revert), Variant::nil());
+    assert!(revert.property_can_revert(do_revert.clone()));
+    assert_eq!(
+        revert.property_get_revert(do_revert),
+        GString::from("hello!").to_variant()
+    );
+
+    assert!(!revert.property_can_revert(changes.clone()));
+    assert!(revert.property_can_revert(changes.clone()));
+
+    assert_eq!(revert.property_get_revert(changes.clone()), Variant::nil());
+    assert_eq!(
+        revert.property_get_revert(changes.clone()),
+        true.to_variant()
+    );
 }
 
 // Used in `test_collision_object_2d_input_event` in `SpecialTests.gd`.

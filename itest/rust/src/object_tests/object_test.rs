@@ -8,14 +8,13 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use godot::builtin::meta::GodotType;
-use godot::builtin::meta::{FromGodot, ToGodot};
 use godot::builtin::{GString, StringName, Variant, Vector3};
-use godot::engine::utilities::instance_from_id;
-use godot::engine::{
+use godot::classes::{
     file_access, Area2D, Camera3D, Engine, FileAccess, IRefCounted, Node, Node3D, Object,
     RefCounted,
 };
+use godot::global::instance_from_id;
+use godot::meta::{FromGodot, GodotType, ToGodot};
 use godot::obj::{Base, Gd, Inherits, InstanceId, NewAlloc, NewGd, RawGd};
 use godot::register::{godot_api, GodotClass};
 use godot::sys::{self, interface_fn, GodotFfi};
@@ -841,6 +840,19 @@ fn object_get_scene_tree(ctx: &TestContext) {
     assert_eq!(count, 1);
 } // implicitly tested: node does not leak
 
+#[itest]
+fn object_try_to_unique() {
+    let a = RefCounted::new_gd();
+    let id = a.instance_id();
+    let a = a.try_to_unique().expect("a.try_to_unique()");
+    assert_eq!(a.instance_id(), id);
+
+    let b = a.clone();
+    let (b, ref_count) = b.try_to_unique().expect_err("b.try_to_unique()");
+    assert_eq!(b.instance_id(), id);
+    assert_eq!(ref_count, 2);
+}
+
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
 #[derive(GodotClass)]
@@ -1053,21 +1065,3 @@ fn double_use_reference() {
 #[derive(GodotClass)]
 #[class(no_init, base = EditorPlugin, editor_plugin, tool)]
 struct CustomEditorPlugin;
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-
-#[itest]
-fn non_unique_error_works() {
-    use godot::engine::RefCounted;
-    use godot::obj::NotUniqueError;
-
-    let unique = RefCounted::new_gd();
-    assert!(NotUniqueError::check(unique).is_ok());
-
-    let shared = RefCounted::new_gd();
-    let cloned = shared.clone();
-    match NotUniqueError::check(cloned) {
-        Err(error) => assert_eq!(error.get_reference_count(), 2),
-        Ok(_) => panic!("NotUniqueError::check must not succeed"),
-    }
-}
