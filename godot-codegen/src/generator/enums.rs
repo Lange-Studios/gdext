@@ -5,21 +5,20 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::context::Context;
 use crate::models::domain::{Enum, Enumerator, EnumeratorValue};
 use crate::util;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-pub fn make_enums(enums: &[Enum], ctx: &mut Context) -> TokenStream {
-    let definitions = enums.iter().map(|enum_| make_enum_definition(enum_, ctx));
+pub fn make_enums(enums: &[Enum]) -> TokenStream {
+    let definitions = enums.iter().map(make_enum_definition);
 
     quote! {
         #( #definitions )*
     }
 }
 
-pub fn make_enum_definition(enum_: &Enum, ctx: &mut Context) -> TokenStream {
+pub fn make_enum_definition(enum_: &Enum) -> TokenStream {
     // TODO enums which have unique ords could be represented as Rust enums
     // This would allow exhaustive matches (or at least auto-completed matches + #[non_exhaustive]). But even without #[non_exhaustive],
     // this might be a forward compatibility hazard, if Godot deprecates enumerators and adds new ones with existing ords.
@@ -40,7 +39,7 @@ pub fn make_enum_definition(enum_: &Enum, ctx: &mut Context) -> TokenStream {
     let mut unique_ords = Vec::with_capacity(rust_enumerators.len());
 
     for enumerator in rust_enumerators.iter() {
-        let def = make_enumerator_definition(enumerator, ctx);
+        let def = make_enumerator_definition(enumerator);
         enumerators.push(def);
 
         if let EnumeratorValue::Enum(ord) = enumerator.value {
@@ -90,15 +89,15 @@ pub fn make_enum_definition(enum_: &Enum, ctx: &mut Context) -> TokenStream {
                 }
             }
         };
-        enum_ord_type = quote! { i64 };
+        enum_ord_type = quote! { u64 };
         self_as_trait = quote! { <Self as crate::obj::EngineBitfield> };
         engine_impl = quote! {
             impl crate::obj::EngineBitfield for #rust_enum_name {
-                fn try_from_ord(ord: i64) -> Option<Self> {
+                fn try_from_ord(ord: u64) -> Option<Self> {
                     Some(Self { ord })
                 }
 
-                fn ord(self) -> i64 {
+                fn ord(self) -> u64 {
                     self.ord
                 }
             }
@@ -129,7 +128,7 @@ pub fn make_enum_definition(enum_: &Enum, ctx: &mut Context) -> TokenStream {
 
     // Enumerator ordinal stored as i32, since that's enough to hold all current values and the default repr in C++.
     // Public interface is i64 though, for consistency (and possibly forward compatibility?).
-    // Bitfield ordinals are stored as i64.
+    // Bitfield ordinals are stored as u64. See also: https://github.com/godotengine/godot-cpp/pull/1320
     quote! {
         #[repr(transparent)]
         #[derive(#( #derives ),*)]
@@ -173,24 +172,14 @@ pub fn make_enumerator_ord(ord: i32) -> Literal {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Implementation
 
-fn make_bitfield_flag_ord(ord: i64) -> Literal {
-    Literal::i64_suffixed(ord)
+fn make_bitfield_flag_ord(ord: u64) -> Literal {
+    Literal::u64_suffixed(ord)
 }
 
-fn make_enumerator_definition(enumerator: &Enumerator, ctx: &mut Context) -> TokenStream {
+fn make_enumerator_definition(enumerator: &Enumerator) -> TokenStream {
     let ordinal_lit = match enumerator.value {
         EnumeratorValue::Enum(ord) => make_enumerator_ord(ord),
-        EnumeratorValue::Bitfield(ord) => {
-            if ord < 0 {
-                ctx.warnings_mut().push(format!(
-                    "Encountered negative bitfield. {} = {}. This is currently being discussed in the following issues: https://github.com/godotengine/godot/issues/88962, https://github.com/CoaguCo-Industries/GodotSteam/issues/424", 
-                    enumerator.godot_name,
-                    ord
-                ))
-            }
-
-            make_bitfield_flag_ord(ord)
-        }
+        EnumeratorValue::Bitfield(ord) => make_bitfield_flag_ord(ord),
     };
 
     let rust_ident = &enumerator.name;

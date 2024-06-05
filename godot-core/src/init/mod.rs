@@ -12,8 +12,7 @@ use godot_ffi as sys;
 use sys::GodotFfi;
 
 use crate::builtin::{GString, StringName};
-use crate::gen::warn;
-use crate::{godot_warn, out};
+use crate::out;
 
 pub use sys::GdextBuild;
 
@@ -56,12 +55,6 @@ pub unsafe fn __gdext_load_library<E: ExtensionLibrary>(
         };
 
         *init = godot_init_params;
-
-        if !E::ignore_codegen_warnings() {
-            for warning in warn::warnings() {
-                godot_warn!("{warning}");
-            }
-        }
 
         success as u8
     };
