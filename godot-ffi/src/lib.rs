@@ -5,7 +5,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-//! Low level bindings to the provided C core API
+//! # Internal crate of [**godot-rust**](https://godot-rust.github.io)
+//!
+//! Do not depend on this crate directly, instead use the `godot` crate.
+//! No SemVer or other guarantees are provided.
+//!
+//! # Contributor docs
+//!
+//! Low level bindings to the provided C core API.
 
 #![cfg_attr(test, allow(unused))]
 
@@ -21,6 +28,8 @@
 pub(crate) mod gen {
     include!(concat!(env!("OUT_DIR"), "/mod.rs"));
 }
+
+pub mod conv;
 
 mod compat;
 mod extras;
