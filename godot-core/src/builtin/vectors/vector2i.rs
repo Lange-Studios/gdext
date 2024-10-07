@@ -10,19 +10,43 @@ use std::cmp::Ordering;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{GlamConv, GlamType};
-use crate::builtin::{inner, real, RVec2, Vector2, Vector2Axis};
+use crate::builtin::{inner, real, RVec2, Vector2, Vector2Axis, Vector3i};
 
 use std::fmt;
 
 /// Vector used for 2D math using integer coordinates.
 ///
-/// 2-element structure that can be used to represent positions in 2D space or any other pair of
-/// numeric values.
+/// 2-element structure that can be used to represent discrete positions or directions in 2D space,
+/// as well as any other pair of numeric values.
 ///
-/// It uses integer coordinates and is therefore preferable to [`Vector2`] when exact precision is
-/// required. Note that the values are limited to 32 bits, and unlike [`Vector2`] this cannot be
+/// `Vector2i` uses integer coordinates and is therefore preferable to [`Vector2`] when exact precision is
+/// required. Note that the values are limited to 32 bits, and unlike `Vector2` this cannot be
 /// configured with an engine build option. Use `i64` or [`PackedInt64Array`][crate::builtin::PackedInt64Array]
 /// if 64-bit values are needed.
+///
+#[doc = shared_vector_docs!()]
+///
+/// ### Navigation to `impl` blocks within this page
+///
+/// - [Constants](#constants)
+/// - [Constructors and general vector functions](#constructors-and-general-vector-functions)
+/// - [Specialized `Vector2i` functions](#specialized-vector2i-functions)
+/// - [2D functions](#2d-functions)
+/// - [Trait impls + operators](#trait-implementations)
+///
+/// # All vector types
+///
+/// | Dimension | Floating-point                       | Integer                                |
+/// |-----------|--------------------------------------|----------------------------------------|
+/// | 2D        | [`Vector2`][crate::builtin::Vector2] | **`Vector2i`**                         |
+/// | 3D        | [`Vector3`][crate::builtin::Vector3] | [`Vector3i`][crate::builtin::Vector3i] |
+/// | 4D        | [`Vector4`][crate::builtin::Vector4] | [`Vector4i`][crate::builtin::Vector4i] |
+///
+/// <br>You can convert to 3D vectors using [`to_3d(z)`][Self::to_3d], and to `Vector2` using [`cast_float()`][Self::cast_float].
+///
+/// # Godot docs
+///
+/// [`Vector2i` (stable)](https://docs.godotengine.org/en/stable/classes/class_vector2i.html)
 #[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -34,23 +58,21 @@ pub struct Vector2i {
     pub y: i32,
 }
 
-impl_vector_operators!(Vector2i, i32, (x, y));
-
-impl_vector_consts!(Vector2i, i32);
-impl_integer_vector_consts!(Vector2i);
-impl_vector2x_consts!(Vector2i, i32);
-
-impl_vector_fns!(Vector2i, glam::IVec2, i32, (x, y));
-impl_vector2x_fns!(Vector2i, i32);
-
+/// # Constants
 impl Vector2i {
-    /// Constructs a new `Vector2i` from a [`Vector2`]. The floating point coordinates will be truncated.
+    impl_vector_consts!(i32);
+    impl_integer_vector_consts!();
+    impl_vector2x_consts!(i32);
+}
+
+/// # Specialized `Vector2i` functions
+impl Vector2i {
+    inline_impl_integer_vector_fns!(Vector2, x, y);
+
+    #[deprecated = "Moved to `Vector2::cast_int()`"]
     #[inline]
     pub const fn from_vector2(v: Vector2) -> Self {
-        Self {
-            x: v.x as i32,
-            y: v.y as i32,
-        }
+        v.cast_int()
     }
 
     /// Converts `self` to the corresponding [`real`] `glam` type.
@@ -66,6 +88,11 @@ impl Vector2i {
         inner::InnerVector2i::from_outer(self)
     }
 }
+
+impl_vector_fns!(Vector2i, glam::IVec2, i32, (x, y));
+impl_vector2x_fns!(Vector2i, Vector3i, i32);
+
+impl_vector_operators!(Vector2i, i32, (x, y));
 
 /// Formats the vector like Godot: `(x, y)`.
 impl fmt::Display for Vector2i {
@@ -121,6 +148,14 @@ mod test {
         let expected_json = "{\"x\":0,\"y\":0}";
 
         crate::builtin::test_utils::roundtrip(&vector, expected_json);
+    }
+
+    #[test]
+    fn sign() {
+        let vector = Vector2i::new(2, -5);
+        assert_eq!(vector.sign(), Vector2i::new(1, -1));
+        let vector = Vector2i::new(1, 0);
+        assert_eq!(vector.sign(), Vector2i::new(1, 0));
     }
 
     #[test]

@@ -36,8 +36,8 @@ fn is_type_excluded(ty: &str, ctx: &mut Context) -> bool {
 
     fn is_rust_type_excluded(ty: &RustTy) -> bool {
         match ty {
-            RustTy::BuiltinIdent(_) => false,
-            RustTy::BuiltinArray(_) => false,
+            RustTy::BuiltinIdent { .. } => false,
+            RustTy::BuiltinArray { .. } => false,
             RustTy::RawPointer { inner, .. } => is_rust_type_excluded(inner),
             RustTy::EngineArray { elem_class, .. } => is_class_excluded(elem_class.as_str()),
             RustTy::EngineEnum {
@@ -46,13 +46,8 @@ fn is_type_excluded(ty: &str, ctx: &mut Context) -> bool {
                 None => false,
                 Some(class) => is_class_excluded(class.as_str()),
             },
-            RustTy::EngineBitfield {
-                surrounding_class, ..
-            } => match surrounding_class.as_ref() {
-                None => false,
-                Some(class) => is_class_excluded(class.as_str()),
-            },
             RustTy::EngineClass { inner_class, .. } => is_class_excluded(&inner_class.to_string()),
+            RustTy::ExtenderReceiver { .. } => false,
         }
     }
     is_rust_type_excluded(&conv::to_rust_type(ty, None, ctx))
@@ -69,7 +64,7 @@ pub(crate) fn is_class_method_excluded(method: &JsonClassMethod, ctx: &mut Conte
         // so passing in a class name while checking for any types is fine.
         let class_deleted = special_cases::is_godot_type_deleted(ty);
 
-        // Then also check if the type is excluded from codegen (due to current Cargo feature. RHS is always false in full-codegen.
+        // Then also check if the type is excluded from codegen (due to current Cargo feature). RHS is always false in full-codegen.
         class_deleted || is_type_excluded(ty, _ctx)
     };
 
@@ -136,6 +131,7 @@ const SELECTED_CLASSES: &[&str] = &[
     "CollisionShape2D",
     "Control",
     "EditorPlugin",
+    "EditorExportPlugin",
     "Engine",
     "FileAccess",
     "GDScript",

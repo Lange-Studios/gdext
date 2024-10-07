@@ -15,6 +15,10 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssi
 /// Unit quaternion to represent 3D rotations.
 ///
 /// See also [`Quaternion`](https://docs.godotengine.org/en/stable/classes/class_quaternion.html) in the Godot documentation.
+///
+/// # Godot docs
+///
+/// [`Quaternion` (stable)](https://docs.godotengine.org/en/stable/classes/class_quaternion.html)
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -274,6 +278,18 @@ impl Mul<Quaternion> for Quaternion {
         let w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z;
 
         Self::new(x, y, z, w)
+    }
+}
+
+impl Mul<Vector3> for Quaternion {
+    type Output = Vector3;
+
+    /// Applies the quaternion's rotation to the 3D point represented by the vector.
+    ///
+    /// # Panics
+    /// If the quaternion is not normalized.
+    fn mul(self, rhs: Vector3) -> Self::Output {
+        Vector3::from_glam(self.to_glam().mul_vec3(rhs.to_glam()))
     }
 }
 

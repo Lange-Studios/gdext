@@ -5,7 +5,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::builtin::{GString, StringName, VariantDispatch, VariantOperator, VariantType};
+use crate::builtin::{
+    GString, StringName, VariantArray, VariantDispatch, VariantOperator, VariantType,
+};
 use crate::meta::error::ConvertError;
 use crate::meta::{ArrayElement, FromGodot, ToGodot};
 use godot_ffi as sys;
@@ -20,7 +22,13 @@ mod impls;
 /// dynamic APIs. For example, if you want to call a method on an object based on a string, you will need variants to store arguments and return
 /// value.  
 ///
-/// See also [Godot documentation for `Variant`](https://docs.godotengine.org/en/stable/classes/class_variant.html).
+/// # Conversions
+///
+/// For type conversions, please read the [`godot::meta` module docs][crate::meta].
+///
+/// # Godot docs
+///
+/// [`Variant` (stable)](https://docs.godotengine.org/en/stable/classes/class_variant.html)
 // We rely on the layout of `Variant` being the same as Godot's layout in `borrow_slice` and `borrow_slice_mut`.
 #[repr(transparent)]
 pub struct Variant {
@@ -29,6 +37,9 @@ pub struct Variant {
 
 impl Variant {
     /// Create an empty variant (`null` value in GDScript).
+    ///
+    /// If a Godot engine API accepts object (not variant) parameters and you'd like to pass `null`, use
+    /// [`Gd::null_arg()`][crate::obj::Gd::null_arg] instead.
     pub fn nil() -> Self {
         Self::default()
     }
@@ -97,7 +108,7 @@ impl Variant {
 
     /// ⚠️ Calls the specified `method` with the given `args`.
     ///
-    /// Supports `Object` as well as built-ins with methods (e.g. `Array`, `Vector3`, `GString`, etc).
+    /// Supports `Object` as well as built-ins with methods (e.g. `Array`, `Vector3`, `GString`, etc.).
     ///
     /// # Panics
     /// * If `self` is not a variant type which supports method calls.
@@ -113,7 +124,7 @@ impl Variant {
         let mut error = sys::default_call_error();
 
         let result = unsafe {
-            Variant::new_with_var_uninit_or_init(|variant_ptr| {
+            Variant::new_with_var_uninit(|variant_ptr| {
                 interface_fn!(variant_call)(
                     sys::SysPtr::force_mut(self.var_sys()),
                     method.string_sys(),
@@ -145,7 +156,7 @@ impl Variant {
         let mut is_valid = false as u8;
 
         let result = unsafe {
-            Self::new_with_var_uninit_or_init(|variant_ptr| {
+            Self::new_with_var_uninit(|variant_ptr| {
                 interface_fn!(variant_evaluate)(
                     op_sys,
                     self.var_sys(),
@@ -235,32 +246,6 @@ impl Variant {
         }
     }
 
-    /// # Safety
-    ///
-    /// For Godot 4.0, see [`GodotFfi::new_with_init`].
-    /// For all other versions, see [`GodotFfi::new_with_uninit`].
-    #[cfg(before_api = "4.1")]
-    #[doc(hidden)]
-    pub unsafe fn new_with_var_uninit_or_init(
-        init_fn: impl FnOnce(sys::GDExtensionVariantPtr),
-    ) -> Self {
-        // SAFETY: We're in Godot 4.0, and so the caller must ensure this is safe.
-        unsafe { Self::new_with_var_init(init_fn) }
-    }
-
-    /// # Safety
-    ///
-    /// For Godot 4.0, see [`GodotFfi::new_with_init`].
-    /// For all other versions, see [`GodotFfi::new_with_uninit`].
-    #[cfg(since_api = "4.1")]
-    #[doc(hidden)]
-    pub unsafe fn new_with_var_uninit_or_init(
-        init_fn: impl FnOnce(sys::GDExtensionUninitializedVariantPtr),
-    ) -> Self {
-        // SAFETY: We're not in Godot 4.0, and so the caller must ensure this is safe.
-        unsafe { Self::new_with_var_uninit(init_fn) }
-    }
-
     /// Fallible construction of a `Variant` using a fallible initialization function.
     ///
     /// # Safety
@@ -275,7 +260,7 @@ impl Variant {
         let mut raw = std::mem::MaybeUninit::<Variant>::uninit();
 
         let var_uninit_ptr =
-            raw.as_mut_ptr() as <sys::GDExtensionVariantPtr as ::godot_ffi::SysPtr>::Uninit;
+            raw.as_mut_ptr() as <sys::GDExtensionVariantPtr as sys::SysPtr>::Uninit;
 
         // SAFETY: `map` only runs the provided closure for the `Ok(())` variant, in which case `raw` has definitely been initialized.
         init_fn(var_uninit_ptr).map(|_success| unsafe { raw.assume_init() })
@@ -398,7 +383,7 @@ impl Variant {
         let ptr = ptr.cast::<Self>();
 
         // SAFETY: `ptr` was returned from a call to `into_owned_var_sys`, which means it was created by a call to
-        // `Box::into_raw`, thus we can use `Box::from_raw` here. Additionally this is only called once on this pointer.
+        // `Box::into_raw`, thus we can use `Box::from_raw` here. Additionally, this is only called once on this pointer.
         let boxed = unsafe { Box::from_raw(ptr) };
         *boxed
     }
@@ -410,8 +395,8 @@ impl ArrayElement for Variant {}
 // `from_opaque` properly initializes a dereferenced pointer to an `OpaqueVariant`.
 // `std::mem::swap` is sufficient for returning a value.
 unsafe impl GodotFfi for Variant {
-    fn variant_type() -> sys::VariantType {
-        sys::VariantType::NIL
+    fn variant_type() -> VariantType {
+        VariantType::NIL
     }
 
     ffi_methods! { type sys::GDExtensionTypePtr = *mut Self; .. }
@@ -465,6 +450,16 @@ impl fmt::Display for Variant {
 
 impl fmt::Debug for Variant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        VariantDispatch::from_variant(self).fmt(f)
+        // Special case for arrays: avoids converting to VariantArray (the only Array type in VariantDispatch), which fails
+        // for typed arrays and causes a panic. This can cause an infinite loop with Debug, or abort.
+        // Can be removed if there's ever a "possibly typed" Array type (e.g. OutArray) in the library.
+
+        if self.get_type() == VariantType::ARRAY {
+            // SAFETY: type is checked, and only operation is print (out data flow, no covariant in access).
+            let array = unsafe { VariantArray::from_variant_unchecked(self) };
+            array.fmt(f)
+        } else {
+            VariantDispatch::from_variant(self).fmt(f)
+        }
     }
 }

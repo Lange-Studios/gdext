@@ -25,6 +25,21 @@ use std::ops::{Mul, MulAssign};
 /// [ a.x  b.x  origin.x ]
 /// [ a.y  b.y  origin.y ]
 /// ```
+///
+/// # All matrix types
+///
+/// | Dimension | Orthogonal basis | Affine transform        | Projective transform |
+/// |-----------|------------------|-------------------------|----------------------|
+/// | 2D        |                  | **`Transform2D`** (2x3) |                      |
+/// | 3D        | [`Basis`] (3x3)  | [`Transform3D`] (3x4)   | [`Projection`] (4x4) |
+///
+/// [`Basis`]: crate::builtin::Basis
+/// [`Transform3D`]: crate::builtin::Transform3D
+/// [`Projection`]: crate::builtin::Projection
+///
+/// # Godot docs
+///
+/// [`Transform2D` (stable)](https://docs.godotengine.org/en/stable/classes/class_transform2d.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -54,12 +69,12 @@ impl Transform2D {
     /// _Godot equivalent: `Transform2D.IDENTITY`_
     pub const IDENTITY: Self = Self::from_basis_origin(Basis2D::IDENTITY, Vector2::ZERO);
 
-    /// The `Transform2D` that will flip something along its x axis.
+    /// The `Transform2D` that will flip something along its X axis.
     ///
     /// _Godot equivalent: `Transform2D.FLIP_X`_
     pub const FLIP_X: Self = Self::from_basis_origin(Basis2D::FLIP_X, Vector2::ZERO);
 
-    /// The `Transform2D` that will flip something along its y axis.
+    /// The `Transform2D` that will flip something along its Y axis.
     ///
     /// _Godot equivalent: `Transform2D.FLIP_Y`_
     pub const FLIP_Y: Self = Self::from_basis_origin(Basis2D::FLIP_Y, Vector2::ZERO);
@@ -149,6 +164,18 @@ impl Transform2D {
     #[must_use]
     pub fn affine_inverse(&self) -> Self {
         self.glam(|aff| aff.inverse())
+    }
+
+    /// Returns the determinant of the basis matrix.
+    ///
+    /// If the basis is uniformly scaled, then its determinant equals the square of the scale factor.
+    ///
+    /// A negative determinant means the basis was flipped, so one part of the scale is negative.
+    /// A zero determinant means the basis isn't invertible, and is usually considered invalid.
+    ///
+    /// _Godot equivalent: `Transform2D.determinant()`_
+    pub fn determinant(&self) -> real {
+        self.basis().determinant()
     }
 
     /// Returns the transform's rotation (in radians).
@@ -447,7 +474,7 @@ impl Basis2D {
     }
 
     /// Returns the determinant of the matrix.
-    pub(crate) fn determinant(&self) -> real {
+    pub fn determinant(&self) -> real {
         self.glam(|mat| mat.determinant())
     }
 

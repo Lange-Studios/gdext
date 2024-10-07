@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::fmt::Display;
 
 use godot::builtin::{
-    dict, varray, GString, NodePath, Signal, StringName, Variant, Vector2, Vector3,
+    array, dict, varray, Array, GString, NodePath, Signal, StringName, Variant, Vector2, Vector3,
 };
 use godot::builtin::{Basis, Dictionary, VariantArray, VariantOperator, VariantType};
 use godot::classes::{Node, Node2D};
@@ -131,6 +131,33 @@ fn variant_bad_conversions() {
 }
 
 #[itest]
+fn variant_array_bad_conversions() {
+    let i32_array: Array<i32> = array![1, 2, 160, -40];
+    let i32_variant = i32_array.to_variant();
+    let i8_back = i32_variant.try_to::<Array<i8>>();
+
+    // In Debug mode, we expect an error upon conversion.
+    #[cfg(debug_assertions)]
+    {
+        let err = i8_back.expect_err("Array<i32> -> Array<i8> conversion should fail");
+        assert_eq!(
+            err.to_string(),
+            "integer value 160 does not fit into Array of type INT: [1, 2, 160, -40]"
+        )
+    }
+
+    // In Release mode, we expect the conversion to succeed, but a panic to occur on element access.
+    #[cfg(not(debug_assertions))]
+    {
+        let i8_array = i8_back.expect("Array<i32> -> Array<i8> conversion should succeed");
+        expect_panic("accessing element 160 as i8 should panic", || {
+            // Note: get() returns Err on out-of-bounds, but currently panics on bad element type, since that's always a bug.
+            i8_array.get(2);
+        });
+    }
+}
+
+#[itest]
 fn variant_special_conversions() {
     // See https://github.com/godot-rust/gdext/pull/598.
     let variant = NodePath::default().to_variant();
@@ -151,6 +178,9 @@ fn variant_get_type() {
 
     let variant = gstr("hello").to_variant();
     assert_eq!(variant.get_type(), VariantType::STRING);
+
+    let variant = sname("hello").to_variant();
+    assert_eq!(variant.get_type(), VariantType::STRING_NAME);
 
     let variant = TEST_BASIS.to_variant();
     assert_eq!(variant.get_type(), VariantType::BASIS)
@@ -236,14 +266,14 @@ fn variant_evaluate() {
     evaluate(VariantOperator::MULTIPLY, 5, 2.5, 12.5);
 
     evaluate(VariantOperator::EQUAL, gstr("hello"), gstr("hello"), true);
-    evaluate(VariantOperator::EQUAL, gstr("hello"), gname("hello"), true);
-    evaluate(VariantOperator::EQUAL, gname("rust"), gstr("rust"), true);
-    evaluate(VariantOperator::EQUAL, gname("rust"), gname("rust"), true);
+    evaluate(VariantOperator::EQUAL, gstr("hello"), sname("hello"), true);
+    evaluate(VariantOperator::EQUAL, sname("rust"), gstr("rust"), true);
+    evaluate(VariantOperator::EQUAL, sname("rust"), sname("rust"), true);
 
     evaluate(VariantOperator::NOT_EQUAL, gstr("hello"), gstr("hallo"), true);
-    evaluate(VariantOperator::NOT_EQUAL, gstr("hello"), gname("hallo"), true);
-    evaluate(VariantOperator::NOT_EQUAL, gname("rust"), gstr("rest"), true);
-    evaluate(VariantOperator::NOT_EQUAL, gname("rust"), gname("rest"), true);
+    evaluate(VariantOperator::NOT_EQUAL, gstr("hello"), sname("hallo"), true);
+    evaluate(VariantOperator::NOT_EQUAL, sname("rust"), gstr("rest"), true);
+    evaluate(VariantOperator::NOT_EQUAL, sname("rust"), sname("rest"), true);
 
     evaluate_fail(VariantOperator::EQUAL, 1, true);
     evaluate_fail(VariantOperator::EQUAL, 0, false);
@@ -364,28 +394,7 @@ fn variant_null_object_is_nil() {
 }
 
 #[itest]
-fn variant_type_correct() {
-    assert_eq!(Variant::nil().get_type(), VariantType::NIL);
-    assert_eq!(0.to_variant().get_type(), VariantType::INT);
-    assert_eq!(3.8.to_variant().get_type(), VariantType::FLOAT);
-    assert_eq!(false.to_variant().get_type(), VariantType::BOOL);
-    assert_eq!("string".to_variant().get_type(), VariantType::STRING);
-    assert_eq!(
-        StringName::from("string_name").to_variant().get_type(),
-        VariantType::STRING_NAME
-    );
-    assert_eq!(
-        VariantArray::default().to_variant().get_type(),
-        VariantType::ARRAY
-    );
-    assert_eq!(
-        Dictionary::default().to_variant().get_type(),
-        VariantType::DICTIONARY
-    );
-}
-
-#[itest]
-fn variant_stringify_correct() {
+fn variant_stringify() {
     assert_eq!("value".to_variant().stringify(), gstr("value"));
     assert_eq!(Variant::nil().stringify(), gstr("<null>"));
     assert_eq!(true.to_variant().stringify(), gstr("true"));
@@ -401,7 +410,7 @@ fn variant_stringify_correct() {
 }
 
 #[itest]
-fn variant_booleanize_correct() {
+fn variant_booleanize() {
     assert!(gstr("string").to_variant().booleanize());
     assert!(10.to_variant().booleanize());
     assert!(varray![""].to_variant().booleanize());
@@ -415,7 +424,7 @@ fn variant_booleanize_correct() {
 }
 
 #[itest]
-fn variant_hash_correct() {
+fn variant_hash() {
     let hash_is_not_0 = [
         dict! {}.to_variant(),
         gstr("").to_variant(),
@@ -437,9 +446,9 @@ fn variant_hash_correct() {
 
     assert_eq!(Variant::nil().hash(), 0);
 
-    // it's not guaranteed that different object will have different hash but it is
+    // It's not guaranteed that different object will have different hash, but it is
     // extremely unlikely for a collision to happen.
-    assert_ne!(dict! { 0: dict!{ 0: 0 } }, dict! { 0: dict!{ 0: 1 } });
+    assert_ne!(dict! { 0: dict! { 0: 0 } }, dict! { 0: dict! { 0: 1 } });
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -556,6 +565,6 @@ fn gstr(s: &str) -> GString {
     GString::from(s)
 }
 
-fn gname(s: &str) -> StringName {
+fn sname(s: &str) -> StringName {
     StringName::from(s)
 }

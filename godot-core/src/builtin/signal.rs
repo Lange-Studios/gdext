@@ -21,6 +21,10 @@ use sys::{ffi_methods, GodotFfi};
 /// A `Signal` represents a signal of an Object instance in Godot.
 ///
 /// Signals are composed of a reference to an `Object` and the name of the signal on this object.
+///
+/// # Godot docs
+///
+/// [`Signal` (stable)](https://docs.godotengine.org/en/stable/classes/class_signal.html)
 pub struct Signal {
     opaque: sys::types::OpaqueSignal,
 }
@@ -40,7 +44,7 @@ impl Signal {
     {
         let signal_name = signal_name.into();
         unsafe {
-            sys::new_with_uninit_or_init::<Self>(|self_ptr| {
+            Self::new_with_uninit(|self_ptr| {
                 let ctor = sys::builtin_fn!(signal_from_object_signal);
                 let raw = object.to_ffi();
                 let args = [raw.as_arg_ptr(), signal_name.sys()];
@@ -49,7 +53,7 @@ impl Signal {
         }
     }
 
-    /// Creates an invalid/empty signal that is not able to be called.
+    /// Creates an invalid/empty signal that cannot be called.
     ///
     /// _Godot equivalent: `Signal()`_
     pub fn invalid() -> Self {

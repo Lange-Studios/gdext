@@ -68,7 +68,7 @@
 //! * **`api-custom`**
 //!
 //!   Sets the [**API level**](https://godot-rust.github.io/book/toolchain/godot-version.html) to the specified Godot version,
-//!   or a custom-built local binary.  
+//!   or a custom-built local binary.
 //!   You can use at most one `api-*` feature. If absent, the current Godot minor version is used, with patch level 0.<br><br>
 //!
 //! * **`double-precision`**
@@ -107,6 +107,13 @@
 //!   Use rustfmt to format generated binding code. Because rustfmt is so slow, this is detrimental to initial compile time.
 //!   Without it, we use a lightweight and fast custom formatter to enable basic human readability.
 //!
+//! * **`register-docs`**
+//!
+//!   Generates documentation for your structs from your Rust documentation.
+//!   Documentation is visible in Godot via `F1` -> searching for that class.
+//!   This feature requires at least Godot 4.3.
+//!   See also: [`#[derive(GodotClass)]`](register/derive.GodotClass.html#documentation)
+//!
 //! _Integrations:_
 //!
 //! * **`serde`**
@@ -114,6 +121,10 @@
 //!   Implement the [serde](https://serde.rs/) traits `Serialize` and `Deserialize` traits for certain built-in types.
 //!   The serialized representation underlies **no stability guarantees** and may change at any time, even without a SemVer-breaking change.
 //!
+
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/godot-rust/assets/master/gdext/ferris.svg"
+)]
 
 #[cfg(doc)]
 pub mod __docs;
@@ -124,6 +135,12 @@ pub mod __docs;
 #[cfg(all(feature = "lazy-function-tables", feature = "experimental-threads"))]
 compile_error!("Thread safety for lazy function pointers is not yet implemented.");
 
+#[cfg(all(
+    feature = "experimental-wasm-nothreads",
+    feature = "experimental-threads"
+))]
+compile_error!("Cannot use 'experimental-threads' with a nothreads Wasm build yet.");
+
 #[cfg(all(target_family = "wasm", not(feature = "experimental-wasm")))]
 compile_error!("Must opt-in using `experimental-wasm` Cargo feature; keep in mind that this is work in progress");
 
@@ -131,26 +148,7 @@ compile_error!("Must opt-in using `experimental-wasm` Cargo feature; keep in min
 #[cfg(all(feature = "double-precision", not(feature = "api-custom")))]
 compile_error!("The feature `double-precision` currently requires `api-custom` due to incompatibilities in the GDExtension API JSON.");
 
-#[cfg(feature = "custom-godot")]
-__deprecated::emit_deprecated_warning!(feature_custom_godot);
-
-const fn _validate_features() {
-    let mut count = 0;
-
-    if cfg!(feature = "api-4-0") {
-        count += 1;
-    }
-    if cfg!(feature = "api-4-1") {
-        count += 1;
-    }
-    if cfg!(feature = "api-custom") {
-        count += 1;
-    }
-
-    assert!(count <= 1, "at most one `api-*` feature can be enabled");
-}
-
-const _: () = _validate_features();
+// Note: #[cfg]s are not emitted in this crate, so move checks for those up to godot-core.
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Modules
@@ -158,8 +156,8 @@ const _: () = _validate_features();
 #[doc(inline)]
 pub use godot_core::{builtin, classes, global, meta, obj, tools};
 
-#[allow(deprecated)]
-pub use godot_core::{engine, log};
+#[doc(hidden)]
+pub use godot_core::possibly_docs as docs;
 
 #[doc(hidden)]
 pub use godot_core::sys;
@@ -180,6 +178,9 @@ pub mod register {
     /// Re-exports used by proc-macro API.
     #[doc(hidden)]
     pub mod private {
+        #[cfg(feature = "__codegen-full")]
+        pub use godot_core::registry::class::auto_register_rpcs;
+        pub use godot_core::registry::godot_register_wrappers::*;
         pub use godot_core::registry::{constant, method};
     }
 }

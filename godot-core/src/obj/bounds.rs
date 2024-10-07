@@ -50,7 +50,7 @@
 use crate::obj::cap::GodotDefault;
 use crate::obj::{Bounds, Gd, GodotClass, RawGd};
 use crate::registry::callbacks;
-use crate::storage::Storage;
+use crate::storage::{InstanceCache, Storage};
 use crate::{out, sys};
 use private::Sealed;
 
@@ -58,7 +58,7 @@ use private::Sealed;
 // Sealed trait
 
 pub(super) mod private {
-    use super::{Declarer, DynMemory, Memory};
+    use super::{Declarer, DynMemory, Exportable, Memory};
 
     // Bounds trait declared here for code locality; re-exported in crate::obj.
 
@@ -97,6 +97,12 @@ pub(super) mod private {
         /// Whether this class is a core Godot class provided by the engine, or declared by the user as a Rust struct.
         // TODO what about GDScript user classes?
         type Declarer: Declarer;
+
+        /// True if *either* `T: Inherits<Node>` *or* `T: Inherits<Resource>` is fulfilled.
+        ///
+        /// Enables `#[export]` for those classes.
+        #[doc(hidden)]
+        type Exportable: Exportable;
     }
 
     /// Implements [`Bounds`] for a user-defined class.
@@ -117,7 +123,7 @@ pub(super) mod private {
     ///     type Base = Node;
     ///
     ///     fn class_name() -> ClassName {
-    ///         ClassName::from_ascii_cstr(b"MyClass\0")
+    ///         ClassName::new_cached::<MyClass>(|| "MyClass".to_string())
     ///     }
     /// }
     ///
@@ -130,6 +136,7 @@ pub(super) mod private {
                 type Memory = <<$UserClass as $crate::obj::GodotClass>::Base as $crate::obj::Bounds>::Memory;
                 type DynMemory = <<$UserClass as $crate::obj::GodotClass>::Base as $crate::obj::Bounds>::DynMemory;
                 type Declarer = $crate::obj::bounds::DeclUser;
+                type Exportable = <<$UserClass as $crate::obj::GodotClass>::Base as $crate::obj::Bounds>::Exportable;
             }
         };
     }
@@ -343,7 +350,14 @@ impl DynMemory for MemManual {
 
 /// Trait that specifies who declares a given `GodotClass`.
 pub trait Declarer: Sealed {
+    /// The target type of a `Deref` operation on a `Gd<T>`.
+    #[doc(hidden)]
     type DerefTarget<T: GodotClass>: GodotClass;
+
+    /// Used as a field in `RawGd`; only set for user-defined classes.
+    #[doc(hidden)]
+    #[allow(private_bounds)]
+    type InstanceCache: InstanceCache;
 
     /// Check if the object is a user object *and* currently locked by a `bind()` or `bind_mut()` guard.
     ///
@@ -365,6 +379,7 @@ pub enum DeclEngine {}
 impl Sealed for DeclEngine {}
 impl Declarer for DeclEngine {
     type DerefTarget<T: GodotClass> = T;
+    type InstanceCache = ();
 
     unsafe fn is_currently_bound<T>(_obj: &RawGd<T>) -> bool
     where
@@ -390,6 +405,7 @@ pub enum DeclUser {}
 impl Sealed for DeclUser {}
 impl Declarer for DeclUser {
     type DerefTarget<T: GodotClass> = T::Base;
+    type InstanceCache = std::cell::Cell<sys::GDExtensionClassInstancePtr>;
 
     unsafe fn is_currently_bound<T>(obj: &RawGd<T>) -> bool
     where
@@ -408,3 +424,19 @@ impl Declarer for DeclUser {
         }
     }
 }
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// Exportable bounds (still hidden)
+
+#[doc(hidden)]
+pub trait Exportable: Sealed {}
+
+#[doc(hidden)]
+pub enum Yes {}
+impl Sealed for Yes {}
+impl Exportable for Yes {}
+
+#[doc(hidden)]
+pub enum No {}
+impl Sealed for No {}
+impl Exportable for No {}

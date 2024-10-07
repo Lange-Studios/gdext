@@ -9,9 +9,9 @@ use crate::builtin::{real, GString, PackedByteArray, PackedStringArray, Variant}
 use crate::classes::file_access::{CompressionMode, ModeFlags};
 use crate::classes::FileAccess;
 use crate::global::Error;
+use crate::meta::error::IoError;
 use crate::obj::Gd;
 
-use crate::engine::IoError;
 use std::cmp;
 use std::io::{BufRead, ErrorKind, Read, Seek, SeekFrom, Write};
 
@@ -153,7 +153,7 @@ impl GFile {
     pub fn open_encrypted(
         path: impl Into<GString>,
         flags: ModeFlags,
-        key: PackedByteArray,
+        key: &PackedByteArray,
     ) -> std::io::Result<Self> {
         let path: GString = path.into();
         let fa = FileAccess::open_encrypted(path.clone(), flags, key).ok_or_else(|| {
@@ -220,7 +220,7 @@ impl GFile {
     // ----------------------------------------------------------------------------------------------------------------------------------------------
     // Remaps of the internal FileAccess methods.
 
-    /// Get last modified time as an unix timestamp.
+    /// Get last modified time as a Unix timestamp.
     #[doc(alias = "get_modified_time")]
     pub fn modified_time(path: impl Into<GString>) -> std::io::Result<u64> {
         let modified_time = FileAccess::get_modified_time(path.into());
@@ -591,7 +591,7 @@ impl GFile {
     #[doc(alias = "store_csv_line")]
     pub fn write_csv_line(
         &mut self,
-        values: PackedStringArray,
+        values: &PackedStringArray,
         delim: impl Into<GString>,
     ) -> std::io::Result<()> {
         self.fa.store_csv_line_ex(values).delim(delim.into()).done();
@@ -611,7 +611,7 @@ impl GFile {
     #[doc(alias = "store_var")]
     pub fn write_variant(&mut self, value: Variant, full_objects: bool) -> std::io::Result<()> {
         self.fa
-            .store_var_ex(value)
+            .store_var_ex(&value)
             .full_objects(full_objects)
             .done();
         self.clear_file_length();
@@ -753,7 +753,7 @@ impl Write for GFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.pack_into_write_buffer(buf);
         self.fa
-            .store_buffer(self.write_buffer.subarray(0, buf.len()));
+            .store_buffer(&self.write_buffer.subarray(0, buf.len()));
         self.clear_file_length();
         self.check_error()?;
 

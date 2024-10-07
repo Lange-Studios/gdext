@@ -280,6 +280,7 @@ pub struct FunctionCommon {
     pub return_value: FnReturn,
     pub is_vararg: bool,
     pub is_private: bool,
+    pub is_virtual_required: bool,
     pub direction: FnDirection,
 }
 
@@ -313,6 +314,10 @@ pub trait Function: fmt::Display {
     }
     fn direction(&self) -> FnDirection {
         self.common().direction
+    }
+
+    fn is_virtual_required(&self) -> bool {
+        self.common().is_virtual_required
     }
 }
 
@@ -473,7 +478,11 @@ impl FnQualifier {
 
 pub struct FnParam {
     pub name: Ident,
+
+    /// Type, as it appears in `type CallSig` tuple definition.
     pub type_: RustTy,
+
+    /// Rust expression for default value, if available.
     pub default_value: Option<TokenStream>,
 }
 
@@ -510,6 +519,7 @@ impl FnParam {
         }
     }
 
+    /// `impl AsObjectArg<T>` for object parameters. Only set if requested and `T` is an engine class.
     pub fn new_no_defaults(method_arg: &JsonMethodArg, ctx: &mut Context) -> FnParam {
         FnParam {
             name: safe_ident(&method_arg.name),
@@ -517,6 +527,17 @@ impl FnParam {
             //type_: to_rust_type(&method_arg.type_, &method_arg.meta, ctx),
             default_value: None,
         }
+    }
+}
+
+impl fmt::Debug for FnParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let def_val = self
+            .default_value
+            .as_ref()
+            .map_or(String::new(), |v| format!(" (default {v})"));
+
+        write!(f, "{}: {}{}", self.name, self.type_, def_val)
     }
 }
 
@@ -573,25 +594,18 @@ pub struct GodotTy {
     pub meta: Option<String>,
 }
 
-// impl GodotTy {
-//     fn new<'a>(ty: &'a String, meta: &'a Option<String>) -> Self {
-//         Self {
-//             ty: ty.clone(),
-//             meta: meta.clone(),
-//         }
-//     }
-// }
-
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Rust type
 
 #[derive(Clone, Debug)]
 pub enum RustTy {
-    /// `bool`, `Vector3i`
-    BuiltinIdent(Ident),
+    /// `bool`, `Vector3i`, `Array`
+    BuiltinIdent { ty: Ident, is_copy: bool },
 
     /// `Array<i32>`
-    BuiltinArray(TokenStream),
+    ///
+    /// Note that untyped arrays are mapped as `BuiltinIdent("Array")`.
+    BuiltinArray { elem_type: TokenStream },
 
     /// C-style raw pointer to a `RustTy`.
     RawPointer { inner: Box<RustTy>, is_const: bool },
@@ -603,46 +617,68 @@ pub enum RustTy {
         elem_class: String,
     },
 
-    /// `module::Enum`
+    /// `module::Enum` or `module::Bitfield`
     EngineEnum {
         tokens: TokenStream,
         /// `None` for globals
         #[allow(dead_code)] // only read in minimal config
         surrounding_class: Option<String>,
-    },
-
-    /// `module::Bitfield`
-    EngineBitfield {
-        tokens: TokenStream,
-        /// `None` for globals
-        #[allow(dead_code)] // only read in minimal config
-        surrounding_class: Option<String>,
+        is_bitfield: bool,
     },
 
     /// `Gd<Node>`
     EngineClass {
-        /// Tokens with full `Gd<T>`
+        /// Tokens with full `Gd<T>` (e.g. used in return type position).
         tokens: TokenStream,
+
+        /// Tokens with `ObjectArg<T>` (used in `type CallSig` tuple types).
+        object_arg: TokenStream,
+
+        /// Signature declaration with `impl AsObjectArg<T>`.
+        impl_as_object_arg: TokenStream,
+
         /// only inner `T`
-        #[allow(dead_code)] // only read in minimal config
+        #[allow(dead_code)]
+        // only read in minimal config + RustTy::default_extender_field_decl()
         inner_class: Ident,
     },
+
+    /// Receiver type of default parameters extender constructor.
+    ExtenderReceiver { tokens: TokenStream },
 }
 
 impl RustTy {
+    pub fn param_decl(&self) -> TokenStream {
+        match self {
+            RustTy::EngineClass {
+                impl_as_object_arg, ..
+            } => impl_as_object_arg.clone(),
+            other => other.to_token_stream(),
+        }
+    }
+
     pub fn return_decl(&self) -> TokenStream {
         match self {
             Self::EngineClass { tokens, .. } => quote! { -> Option<#tokens> },
             other => quote! { -> #other },
         }
     }
+
+    pub fn is_pass_by_ref(&self) -> bool {
+        matches!(
+            self,
+            RustTy::BuiltinIdent { is_copy: false, .. }
+                | RustTy::BuiltinArray { .. }
+                | RustTy::EngineArray { .. }
+        )
+    }
 }
 
 impl ToTokens for RustTy {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            RustTy::BuiltinIdent(ident) => ident.to_tokens(tokens),
-            RustTy::BuiltinArray(path) => path.to_tokens(tokens),
+            RustTy::BuiltinIdent { ty: ident, .. } => ident.to_tokens(tokens),
+            RustTy::BuiltinArray { elem_type } => elem_type.to_tokens(tokens),
             RustTy::RawPointer {
                 inner,
                 is_const: true,
@@ -653,9 +689,15 @@ impl ToTokens for RustTy {
             } => quote! { *mut #inner }.to_tokens(tokens),
             RustTy::EngineArray { tokens: path, .. } => path.to_tokens(tokens),
             RustTy::EngineEnum { tokens: path, .. } => path.to_tokens(tokens),
-            RustTy::EngineBitfield { tokens: path, .. } => path.to_tokens(tokens),
             RustTy::EngineClass { tokens: path, .. } => path.to_tokens(tokens),
+            RustTy::ExtenderReceiver { tokens: path } => path.to_tokens(tokens),
         }
+    }
+}
+
+impl fmt::Display for RustTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_token_stream().to_string().replace(" ", ""))
     }
 }
 

@@ -86,8 +86,10 @@ macro_rules! push_newtype {
             }
 
             impl godot::meta::ToGodot for $name {
+                type ToVia<'v> = $T;
+
                 #[allow(clippy::clone_on_copy)]
-                fn to_godot(&self) -> Self::Via {
+                fn to_godot(&self) -> Self::ToVia<'_> {
                     self.0.clone()
                 }
             }
@@ -217,9 +219,8 @@ fn main() {
     let rust_tokens = quote::quote! {
         use godot::builtin::*;
         use godot::meta::*;
-        use godot::log::godot_error;
         use godot::obj::{Gd, InstanceId};
-        use godot::global::Error;
+        use godot::global::{Error, godot_error};
         use godot::classes::{Node, Resource};
 
         #[derive(godot::register::GodotClass)]
@@ -415,27 +416,27 @@ fn generate_property_template(inputs: &[Input]) -> PropertyTests {
             continue;
         }
 
-        let property = format_ident!("property_{ident}");
-        let property_array = format_ident!("property_array_{ident}");
+        let var = format_ident!("var_{ident}");
+        let var_array = format_ident!("var_array_{ident}");
         let export = format_ident!("export_{ident}");
         let export_array = format_ident!("export_array_{ident}");
 
         let initializer = initializer
             .as_ref()
-            .map(|init| quote! { #[init(default = #init)] });
+            .map(|init| quote! { #[init(val = #init)] });
 
         rust.extend([
             quote! {
                 #[var]
                 #initializer
-                #property: #rust_ty
+                #var: #rust_ty
             },
-            quote! { #[var] #property_array: Array<#rust_ty> },
+            quote! { #[var] #var_array: Array<#rust_ty> },
         ]);
 
         gdscript.extend([
-            format!("var {property}: {gdscript_ty}"),
-            format!("var {property_array}: Array[{gdscript_ty}]"),
+            format!("var {var}: {gdscript_ty}"),
+            format!("var {var_array}: Array[{gdscript_ty}]"),
         ]);
 
         if *is_exportable {

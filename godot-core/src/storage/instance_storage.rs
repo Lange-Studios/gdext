@@ -4,8 +4,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-
 use godot_ffi as sys;
+use std::cell::Cell;
+use std::ptr;
 
 #[cfg(not(feature = "experimental-threads"))]
 use godot_cell::panicking::{InaccessibleGuard, MutGuard, RefGuard};
@@ -237,9 +238,26 @@ pub unsafe fn destroy_storage<T: GodotClass>(instance_ptr: sys::GDExtensionClass
         // `leak_rust_object` is false, meaning that `is_bound()` returned `false`. Because if it were `true`
         // then the process would either be aborted, or we set `leak_rust_object = true`.
         //
-        // Therefore we can safely drop this storage as per the safety contract of `Storage`. Which we know
+        // Therefore, we can safely drop this storage as per the safety contract of `Storage`. Which we know
         // `InstanceStorage<T>` implements because of `_INSTANCE_STORAGE_IMPLEMENTS_STORAGE`.
         let _drop = unsafe { Box::from_raw(raw) };
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// InstanceCache polymorphism, no-op for engine-defined types
+
+pub(crate) trait InstanceCache: Clone {
+    fn null() -> Self;
+}
+
+impl InstanceCache for () {
+    fn null() -> Self {} // returns ()
+}
+
+impl InstanceCache for Cell<sys::GDExtensionClassInstancePtr> {
+    fn null() -> Self {
+        Cell::new(ptr::null_mut())
     }
 }
 
@@ -261,7 +279,7 @@ extern "C" fn create_callback(
     _p_instance: *mut std::os::raw::c_void,
 ) -> *mut std::os::raw::c_void {
     // There is no "instance binding" for Godot types like Node3D -- this would be the user-defined Rust class
-    std::ptr::null_mut()
+    ptr::null_mut()
 }
 
 extern "C" fn free_callback(

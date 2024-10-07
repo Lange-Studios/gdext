@@ -5,15 +5,20 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+// TODO remove once instance_from_id() etc are removed.
+#![allow(deprecated)]
+
 use crate::framework::itest;
 
 use godot::builtin::{GString, Variant};
+use godot::classes::Node3D;
 use godot::global::*;
+use godot::obj::NewAlloc;
 
 #[itest]
 fn utilities_abs() {
     let input = Variant::from(-7);
-    let output = abs(input);
+    let output = abs(&input);
 
     assert_eq!(output, Variant::from(7));
 }
@@ -21,7 +26,7 @@ fn utilities_abs() {
 #[itest]
 fn utilities_sign() {
     let input = Variant::from(-7);
-    let output = sign(input);
+    let output = sign(&input);
 
     assert_eq!(output, Variant::from(-1));
 }
@@ -43,13 +48,17 @@ fn utilities_str() {
 
 #[itest]
 fn utilities_wrap() {
-    let output = wrap(Variant::from(3.4), Variant::from(2.0), Variant::from(3.0));
+    let output = wrap(
+        &Variant::from(3.4),
+        &Variant::from(2.0),
+        &Variant::from(3.0),
+    );
     assert_eq!(output, Variant::from(2.4));
 
     let output = wrap(
-        Variant::from(-5.7),
-        Variant::from(-3.0),
-        Variant::from(-2.0),
+        &Variant::from(-5.7),
+        &Variant::from(-3.0),
+        &Variant::from(-2.0),
     );
     assert_eq!(output, Variant::from(-2.7));
 }
@@ -57,16 +66,27 @@ fn utilities_wrap() {
 #[itest]
 fn utilities_max() {
     let output = max(
-        Variant::from(1.0),
-        Variant::from(3.0),
+        &Variant::from(1.0),
+        &Variant::from(3.0),
         &[Variant::from(5.0), Variant::from(7.0)],
     );
     assert_eq!(output, Variant::from(7.0));
 
     let output = max(
-        Variant::from(-1.0),
-        Variant::from(-3.0),
+        &Variant::from(-1.0),
+        &Variant::from(-3.0),
         &[Variant::from(-5.0), Variant::from(-7.0)],
     );
     assert_eq!(output, Variant::from(-1.0));
+}
+
+// Checks that godot-rust is not susceptible to the godot-cpp issue https://github.com/godotengine/godot-cpp/issues/1390.
+#[itest]
+fn utilities_is_instance_valid() {
+    let node = Node3D::new_alloc();
+    let variant = Variant::from(node.clone());
+    assert!(is_instance_valid(variant.clone()));
+
+    node.free();
+    assert!(!is_instance_valid(variant));
 }

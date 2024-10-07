@@ -64,14 +64,19 @@ impl<'a> Context<'a> {
             }
 
             // Populate class lookup by name
-            println!("-- add engine class {}", class_name.description());
             engine_classes.insert(class_name.clone(), class);
 
             // Populate derived-to-base relations
             if let Some(base) = class.inherits.as_ref() {
                 let base_name = TyName::from_godot(base);
-                println!("  -- inherits {}", base_name.description());
+                println!(
+                    "* Add engine class {} <- inherits {}",
+                    class_name.description(),
+                    base_name.description()
+                );
                 ctx.inheritance_tree.insert(class_name.clone(), base_name);
+            } else {
+                println!("* Add engine class {}", class_name.description());
             }
 
             // Populate notification constants (first, only for classes that declare them themselves).
@@ -238,6 +243,12 @@ impl<'a> Context<'a> {
         self.builtin_types.contains(ty_name)
     }
 
+    pub fn is_builtin_copy(&self, ty_name: &str) -> bool {
+        debug_assert!(!ty_name.starts_with("Packed")); // Already handled separately.
+
+        !matches!(ty_name, "Variant" | "VariantArray" | "Dictionary")
+    }
+
     pub fn is_native_structure(&self, ty_name: &str) -> bool {
         self.native_structures_types.contains(ty_name)
     }
@@ -329,13 +340,32 @@ impl InheritanceTree {
 
     /// Returns all base classes, without the class itself, in order from nearest to furthest (object).
     pub fn collect_all_bases(&self, derived_name: &TyName) -> Vec<TyName> {
-        let mut maybe_base = derived_name;
+        let mut upgoer = derived_name;
         let mut result = vec![];
 
-        while let Some(base) = self.derived_to_base.get(maybe_base) {
+        while let Some(base) = self.derived_to_base.get(upgoer) {
             result.push(base.clone());
-            maybe_base = base;
+            upgoer = base;
         }
         result
+    }
+
+    /// Whether a class is a direct or indirect subclass of another (true for derived == base).
+    pub fn inherits(&self, derived: &TyName, base_name: &str) -> bool {
+        // Reflexive: T inherits T.
+        if derived.godot_ty == base_name {
+            return true;
+        }
+
+        let mut upgoer = derived;
+
+        while let Some(next_base) = self.derived_to_base.get(upgoer) {
+            if next_base.godot_ty == base_name {
+                return true;
+            }
+            upgoer = next_base;
+        }
+
+        false
     }
 }

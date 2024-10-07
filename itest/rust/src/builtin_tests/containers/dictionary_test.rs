@@ -77,14 +77,14 @@ fn dictionary_macro() {
     let empty = dict!();
     assert!(empty.is_empty());
 
-    let foo = "foo";
+    let key = "num";
     let dict_complex = dict! {
-        foo: 10,
-        "bar": true,
+        key: 10,
+        "bool": true,
         (1 + 2): Variant::nil(),
     };
-    assert_eq!(dict_complex.get("foo"), Some(10.to_variant()));
-    assert_eq!(dict_complex.get("bar"), Some(true.to_variant()));
+    assert_eq!(dict_complex.get("num"), Some(10.to_variant()));
+    assert_eq!(dict_complex.get("bool"), Some(true.to_variant()));
     assert_eq!(dict_complex.get(3), Some(Variant::nil()));
 }
 
@@ -287,7 +287,7 @@ fn dictionary_extend() {
         "bar": "new",
         "baz": Variant::nil(),
     };
-    dictionary.extend_dictionary(other, false);
+    dictionary.extend_dictionary(&other, false);
     assert_eq!(dictionary.get("bar"), Some(true.to_variant()));
     assert_eq!(dictionary.get("baz"), Some(Variant::nil()));
 
@@ -297,7 +297,7 @@ fn dictionary_extend() {
     let other = dict! {
         "bar": "new",
     };
-    dictionary.extend_dictionary(other, true);
+    dictionary.extend_dictionary(&other, true);
     assert_eq!(dictionary.get("bar"), Some("new".to_variant()));
 }
 
@@ -345,12 +345,12 @@ fn dictionary_contains_keys() {
     assert!(dictionary.contains_key("foo"), "key = \"foo\"");
     assert!(dictionary.contains_key("bar"), "key = \"bar\"");
     assert!(
-        dictionary.contains_all_keys(varray!["foo", "bar"]),
+        dictionary.contains_all_keys(&varray!["foo", "bar"]),
         "keys = [\"foo\", \"bar\"]"
     );
     assert!(!dictionary.contains_key("missing"), "key = \"missing\"");
     assert!(
-        !dictionary.contains_all_keys(varray!["foo", "bar", "missing"]),
+        !dictionary.contains_all_keys(&varray!["foo", "bar", "missing"]),
         "keys = [\"foo\", \"bar\", \"missing\"]"
     );
 }

@@ -17,14 +17,39 @@ use std::fmt;
 
 /// Vector used for 3D math using floating point coordinates.
 ///
-/// 3-element structure that can be used to represent positions in 3D space or any other triple of
-/// numeric values.
+/// 3-element structure that can be used to represent continuous positions or directions in 3D space,
+/// as well as any other triple of numeric values.
 ///
 /// It uses floating-point coordinates of 32-bit precision, unlike the engine's `float` type which
 /// is always 64-bit. The engine can be compiled with the option `precision=double` to use 64-bit
-/// vectors; use the gdext library with the `double-precision` feature in that case.
+/// vectors instead; use the gdext library with the `double-precision` feature in that case.
 ///
-/// See [`Vector3i`] for its integer counterpart.
+#[doc = shared_vector_docs!()]
+///
+/// ### Navigation to `impl` blocks within this page
+///
+/// - [Constants](#constants)
+/// - [Constructors and general vector functions](#constructors-and-general-vector-functions)
+/// - [Specialized `Vector3` functions](#specialized-vector3-functions)
+/// - [Float-specific functions](#float-specific-functions)
+/// - [3D functions](#3d-functions)
+/// - [2D and 3D functions](#2d-and-3d-functions)
+/// - [3D and 4D functions](#3d-and-4d-functions)
+/// - [Trait impls + operators](#trait-implementations)
+///
+/// # All vector types
+///
+/// | Dimension | Floating-point                       | Integer                                |
+/// |-----------|--------------------------------------|----------------------------------------|
+/// | 2D        | [`Vector2`][crate::builtin::Vector2] | [`Vector2i`][crate::builtin::Vector2i] |
+/// | 3D        | **`Vector3`**                        | [`Vector3i`][crate::builtin::Vector3i] |
+/// | 4D        | [`Vector4`][crate::builtin::Vector4] | [`Vector4i`][crate::builtin::Vector4i] |
+///
+/// <br>You can convert to 2D vectors using [`to_2d()`][Self::to_2d], and to `Vector3i` using [`cast_int()`][Self::cast_int].
+///
+/// # Godot docs
+///
+/// [`Vector3` (stable)](https://docs.godotengine.org/en/stable/classes/class_vector3.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -39,19 +64,12 @@ pub struct Vector3 {
     pub z: real,
 }
 
-impl_vector_operators!(Vector3, real, (x, y, z));
-
-impl_vector_consts!(Vector3, real);
-impl_float_vector_consts!(Vector3);
-impl_vector3x_consts!(Vector3, real);
-
-impl_vector_fns!(Vector3, RVec3, real, (x, y, z));
-impl_float_vector_fns!(Vector3, (x, y, z));
-impl_vector3x_fns!(Vector3, real);
-impl_vector2_vector3_fns!(Vector3, (x, y, z));
-impl_vector3_vector4_fns!(Vector3, (x, y, z));
-
+/// # Constants
 impl Vector3 {
+    impl_vector_consts!(real);
+    impl_float_vector_consts!();
+    impl_vector3x_consts!(real);
+
     /// Unit vector pointing towards the left side of imported 3D assets.
     pub const MODEL_LEFT: Self = Self::new(1.0, 0.0, 0.0);
 
@@ -69,15 +87,16 @@ impl Vector3 {
 
     /// Unit vector pointing towards the rear side (back) of imported 3D assets.
     pub const MODEL_REAR: Self = Self::new(0.0, 0.0, -1.0);
+}
 
-    /// Constructs a new `Vector3` from a [`Vector3i`].
+impl_vector_fns!(Vector3, RVec3, real, (x, y, z));
+
+/// # Specialized `Vector3` functions
+impl Vector3 {
+    #[deprecated = "Moved to `Vector3i::cast_float()`"]
     #[inline]
     pub const fn from_vector3i(v: Vector3i) -> Self {
-        Self {
-            x: v.x as real,
-            y: v.y as real,
-            z: v.z as real,
-        }
+        v.cast_float()
     }
 
     #[doc(hidden)]
@@ -110,9 +129,10 @@ impl Vector3 {
         n.normalized()
     }
 
-    /// Returns the octahedral-encoded (oct32) form of this Vector3 as a [`Vector2`]. Since a [`Vector2`] occupies 1/3 less memory compared to Vector3,
-    /// this form of compression can be used to pass greater amounts of [`Vector3::normalized`] Vector3s without increasing storage or memory requirements.
-    /// See also [`Vector3::octahedron_decode`].
+    /// Returns the octahedral-encoded (oct32) form of this `Vector3` as a [`Vector2`].
+    ///
+    /// Since a [`Vector2`] occupies 1/3 less memory compared to `Vector3`, this form of compression can be used to pass greater amounts of
+    /// [`Vector3::normalized`] `Vector3`s without increasing storage or memory requirements. See also [`Vector3::octahedron_decode`].
     ///
     /// Note: Octahedral compression is lossy, although visual differences are rarely perceptible in real world scenarios.
     ///
@@ -160,8 +180,20 @@ impl Vector3 {
         Basis::from_axis_angle(axis, angle) * self
     }
 
-    /// Returns the signed angle to the given vector, in radians. The sign of the angle is positive in a counter-clockwise direction and
-    /// negative in a clockwise direction when viewed from the side specified by the `axis`.
+    /// Returns the **unsigned** angle between `self` and the given vector, as radians in `[0, +π]`.
+    ///
+    /// Note that behavior is different from 2D [`Vector2::angle_to()`], which returns the **signed** angle.
+    #[inline]
+    pub fn angle_to(self, to: Self) -> real {
+        self.glam2(&to, |a, b| a.angle_between(b))
+    }
+
+    /// Returns the signed angle to the given vector, as radians in `[-π, +π]`.
+    ///
+    /// The sign of the angle is positive in a counter-clockwise direction and negative in a clockwise direction, when viewed from
+    /// the side specified by the `axis`.
+    ///
+    /// For unsigned angles, use [`Vector3::angle_to()`].
     #[inline]
     pub fn signed_angle_to(self, to: Self, axis: Self) -> real {
         let cross_to = self.cross(to);
@@ -208,6 +240,13 @@ impl Vector3 {
         self.rotated(unit_axis, angle * weight) * (result_length / start_length)
     }
 }
+
+impl_float_vector_fns!(Vector3, Vector3i, (x, y, z));
+impl_vector3x_fns!(Vector3, Vector2, real);
+impl_vector2_vector3_fns!(Vector3, (x, y, z));
+impl_vector3_vector4_fns!(Vector3, (x, y, z));
+
+impl_vector_operators!(Vector3, real, (x, y, z));
 
 /// Formats the vector like Godot: `(x, y, z)`.
 impl fmt::Display for Vector3 {
@@ -284,6 +323,12 @@ mod test {
             vector.rotated(Vector3::new(0.0, 0.0, 1.0), TAU / 2.0),
             vector.rotated(Vector3::new(0.0, 0.0, 1.0), TAU / -2.0),
         );
+    }
+
+    #[test]
+    fn sign() {
+        let vector = Vector3::new(0.2, -0.5, 0.0);
+        assert_eq!(vector.sign(), Vector3::new(1., -1., 0.));
     }
 
     #[test]

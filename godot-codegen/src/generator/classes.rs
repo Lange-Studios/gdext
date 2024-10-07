@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-
 use crate::context::{Context, NotificationEnum};
 use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions};
 use crate::generator::method_tables::MethodTableKey;
@@ -77,7 +76,7 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
 
     // Strings
     let godot_class_str = &class_name.godot_ty;
-    let class_name_cstr = util::cstr_u8_slice(godot_class_str);
+    let class_name_cstr = util::c_str(godot_class_str);
     let virtual_trait_str = class_name.virtual_trait_name();
 
     // Idents and tokens
@@ -156,7 +155,7 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
     // notify() and notify_reversed() are added after other methods, to list others first in docs.
     let notify_methods = notifications::make_notify_methods(class_name, ctx);
 
-    let (assoc_memory, assoc_dyn_memory) = make_bounds(class);
+    let (assoc_memory, assoc_dyn_memory, is_exportable) = make_bounds(class, ctx);
 
     let internal_methods = quote! {
         fn __checked_id(&self) -> Option<crate::obj::InstanceId> {
@@ -214,8 +213,13 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
             impl crate::obj::GodotClass for #class_name {
                 type Base = #base_ty;
 
+                // Code duplicated in godot-macros.
                 fn class_name() -> ClassName {
-                    ClassName::from_ascii_cstr(#class_name_cstr)
+                    // Optimization note: instead of lazy init, could use separate static which is manually initialized during registration.
+                    static CLASS_NAME: std::sync::OnceLock<ClassName> = std::sync::OnceLock::new();
+
+                    let name: &'static ClassName = CLASS_NAME.get_or_init(|| ClassName::alloc_next_ascii(#class_name_cstr));
+                    *name
                 }
 
                 const INIT_LEVEL: crate::init::InitLevel = #init_level;
@@ -224,6 +228,7 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
                 type Memory = crate::obj::bounds::#assoc_memory;
                 type DynMemory = crate::obj::bounds::#assoc_dyn_memory;
                 type Declarer = crate::obj::bounds::DeclEngine;
+                type Exportable = crate::obj::bounds::#is_exportable;
             }
 
             #(
@@ -416,8 +421,10 @@ fn make_deref_impl(class_name: &TyName, base_ty: &TokenStream) -> TokenStream {
     }
 }
 
-fn make_bounds(class: &Class) -> (Ident, Ident) {
-    let assoc_dyn_memory = if class.name().rust_ty == "Object" {
+fn make_bounds(class: &Class, ctx: &mut Context) -> (Ident, Ident, Ident) {
+    let c = class.name();
+
+    let assoc_dyn_memory = if c.rust_ty == "Object" {
         ident("MemDynamic")
     } else if class.is_refcounted {
         ident("MemRefCounted")
@@ -431,7 +438,14 @@ fn make_bounds(class: &Class) -> (Ident, Ident) {
         ident("MemManual")
     };
 
-    (assoc_memory, assoc_dyn_memory)
+    let tree = ctx.inheritance_tree();
+    let is_exportable = if tree.inherits(c, "Node") || tree.inherits(c, "Resource") {
+        ident("Yes")
+    } else {
+        ident("No")
+    };
+
+    (assoc_memory, assoc_dyn_memory, is_exportable)
 }
 
 fn make_class_methods(
@@ -521,6 +535,7 @@ fn make_class_method_definition(
             receiver,
             varcall_invocation,
             ptrcall_invocation,
+            is_virtual_required: false,
         },
         None,
         cfg_attributes,

@@ -22,7 +22,29 @@ use std::fmt;
 /// is always 64-bit. The engine can be compiled with the option `precision=double` to use 64-bit
 /// vectors; use the gdext library with the `double-precision` feature in that case.
 ///
-/// See [`Vector4i`] for its integer counterpart.
+#[doc = shared_vector_docs!()]
+///
+/// ### Navigation to `impl` blocks within this page
+///
+/// - [Constants](#constants)
+/// - [Constructors and general vector functions](#constructors-and-general-vector-functions)
+/// - [Specialized `Vector4` functions](#specialized-vector4-functions)
+/// - [Float-specific functions](#float-specific-functions)
+/// - [4D functions](#4d-functions)
+/// - [3D and 4D functions](#3d-and-4d-functions)
+/// - [Trait impls + operators](#trait-implementations)
+///
+/// # All vector types
+///
+/// | Dimension | Floating-point                       | Integer                                |
+/// |-----------|--------------------------------------|----------------------------------------|
+/// | 2D        | [`Vector2`][crate::builtin::Vector2] | [`Vector2i`][crate::builtin::Vector2i] |
+/// | 3D        | [`Vector3`][crate::builtin::Vector3] | [`Vector3i`][crate::builtin::Vector3i] |
+/// | 4D        | **`Vector4`**                        | [`Vector4i`][crate::builtin::Vector4i] |
+///
+/// # Godot docs
+///
+/// [`Vector4` (stable)](https://docs.godotengine.org/en/stable/classes/class_vector4.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -40,25 +62,19 @@ pub struct Vector4 {
     pub w: real,
 }
 
-impl_vector_operators!(Vector4, real, (x, y, z, w));
-
-impl_vector_consts!(Vector4, real);
-impl_float_vector_consts!(Vector4);
+/// # Constants
+impl Vector4 {
+    impl_vector_consts!(real);
+    impl_float_vector_consts!();
+}
 
 impl_vector_fns!(Vector4, RVec4, real, (x, y, z, w));
-impl_float_vector_fns!(Vector4, (x, y, z, w));
-impl_vector4x_fns!(Vector4, real);
-impl_vector3_vector4_fns!(Vector4, (x, y, z, w));
 
+/// # Specialized `Vector4` functions
 impl Vector4 {
-    /// Constructs a new `Vector4` from a [`Vector4i`][crate::builtin::Vector4i].
+    #[deprecated = "Moved to `Vector4i::cast_float()`"]
     pub const fn from_vector4i(v: Vector4i) -> Self {
-        Self {
-            x: v.x as real,
-            y: v.y as real,
-            z: v.z as real,
-            w: v.w as real,
-        }
+        v.cast_float()
     }
 
     #[doc(hidden)]
@@ -67,6 +83,12 @@ impl Vector4 {
         inner::InnerVector4::from_outer(self)
     }
 }
+
+impl_float_vector_fns!(Vector4, Vector4i, (x, y, z, w));
+impl_vector4x_fns!(Vector4, real);
+impl_vector3_vector4_fns!(Vector4, (x, y, z, w));
+
+impl_vector_operators!(Vector4, real, (x, y, z, w));
 
 /// Formats the vector like Godot: `(x, y, z, w)`.
 impl fmt::Display for Vector4 {
@@ -105,9 +127,8 @@ impl GlamConv for Vector4 {
 
 #[cfg(test)]
 mod test {
-    use crate::assert_eq_approx;
-
     use super::*;
+    use crate::builtin::math::assert_eq_approx;
 
     #[test]
     fn coord_min_max() {
@@ -115,6 +136,12 @@ mod test {
         let b = Vector4::new(0.1, 5.6, 2.3, 1.2);
         assert_eq_approx!(a.coord_min(b), Vector4::new(0.1, 3.4, 2.3, 0.1),);
         assert_eq_approx!(a.coord_max(b), Vector4::new(1.2, 5.6, 5.6, 1.2),);
+    }
+
+    #[test]
+    fn sign() {
+        let vector = Vector4::new(0.2, -0.5, 0., 999.0);
+        assert_eq!(vector.sign(), Vector4::new(1., -1., 0., 1.));
     }
 
     #[cfg(feature = "serde")]

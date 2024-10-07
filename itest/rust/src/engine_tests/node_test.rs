@@ -22,11 +22,11 @@ fn node_get_node() {
 
     let mut parent = Node3D::new_alloc();
     parent.set_name("parent".into());
-    parent.add_child(child.clone().upcast());
+    parent.add_child(child);
 
     let mut grandparent = Node::new_alloc();
     grandparent.set_name("grandparent".into());
-    grandparent.add_child(parent.clone().upcast());
+    grandparent.add_child(parent);
 
     // Directly on Gd<T>
     let found = grandparent.get_node_as::<Node3D>(NodePath::from("parent/child"));
@@ -67,10 +67,10 @@ fn node_scene_tree() {
 
     let mut parent = Node::new_alloc();
     parent.set_name("parent".into());
-    parent.add_child(child.clone());
+    parent.add_child(&child);
 
     let mut scene = PackedScene::new_gd();
-    let err = scene.pack(parent.clone());
+    let err = scene.pack(&parent);
     assert_eq!(err, global::Error::OK);
 
     let mut tree = SceneTree::new_alloc();

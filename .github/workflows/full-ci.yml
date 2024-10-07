@@ -21,7 +21,7 @@ env:
   # * report_objects: list individual leaked objects when running LeakSanitizer
   LSAN_OPTIONS: report_objects=1
 
-  CARGO_DENY_VERSION: "0.14.22"
+  CARGO_DENY_VERSION: "0.15.1"
   CARGO_MACHETE_VERSION: "0.6.2"
 
 
@@ -139,7 +139,7 @@ jobs:
 
           - name: linux
             os: ubuntu-20.04
-            rust-toolchain: "1.78"
+            rust-toolchain: "1.80"
             rust-special: -msrv
 
     steps:
@@ -252,7 +252,7 @@ jobs:
             os: macos-12
             artifact-name: macos-x86-4.2
             godot-binary: godot.macos.editor.dev.x86_64
-    #            godot-prebuilt-patch: '4.2.x'
+            godot-prebuilt-patch: '4.2.2'
 
           - name: macos-arm
             os: macos-latest
@@ -271,7 +271,7 @@ jobs:
             os: macos-latest
             artifact-name: macos-arm-4.2
             godot-binary: godot.macos.editor.dev.arm64
-    #            godot-prebuilt-patch: '4.2.x'
+            godot-prebuilt-patch: '4.2.2'
 
           # Windows
 
@@ -291,7 +291,7 @@ jobs:
             os: windows-latest
             artifact-name: windows-4.2
             godot-binary: godot.windows.editor.dev.x86_64.exe
-            #godot-prebuilt-patch: '4.2.x'
+            godot-prebuilt-patch: '4.2.2'
 
 #          - name: windows-4.1
 #            os: windows-latest
@@ -310,7 +310,7 @@ jobs:
             os: ubuntu-20.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            rust-extra-args: --features godot/__codegen-full
+            rust-extra-args: --features itest/codegen-full
             with-hot-reload: true
 
           # Combines now a lot of features, but should be OK. lazy-function-tables doesn't work with experimental-threads.
@@ -318,13 +318,13 @@ jobs:
             os: ubuntu-20.04
             artifact-name: linux-double-nightly
             godot-binary: godot.linuxbsd.editor.dev.double.x86_64
-            rust-extra-args: --features godot/api-custom,godot/double-precision,godot/__codegen-full,godot/lazy-function-tables
+            rust-extra-args: --features godot/api-custom,godot/double-precision,itest/codegen-full,godot/lazy-function-tables
 
           - name: linux-features-experimental
             os: ubuntu-20.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            rust-extra-args: --features itest/experimental-threads,itest/codegen-full-experimental,godot/api-custom,godot/serde
+            rust-extra-args: --features itest/experimental-threads,itest/codegen-full-experimental,godot/api-custom,godot/serde,itest/register-docs
 
           - name: linux-release
             os: ubuntu-20.04
@@ -333,26 +333,19 @@ jobs:
             rust-extra-args: --release
             rust-cache-key: release
 
-          # Linux compat (4.0 and 4.1 disabled, already covered by memcheck)
+          # Linux compat (4.1 disabled, already covered by memcheck)
+
+          - name: linux-4.3
+            os: ubuntu-20.04
+            artifact-name: linux-4.3
+            godot-binary: godot.linuxbsd.editor.dev.x86_64
+            #godot-prebuilt-patch: '4.3.x'
 
           - name: linux-4.2
             os: ubuntu-20.04
             artifact-name: linux-4.2
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            #godot-prebuilt-patch: '4.2.x'
-
-#          - name: linux-4.1
-#            os: ubuntu-20.04
-#            artifact-name: linux-4.2
-#            godot-binary: godot.linuxbsd.editor.dev.x86_64
-#            godot-prebuilt-patch: '4.1.4'
-#
-#          - name: linux-4.0
-#            os: ubuntu-20.04
-#            artifact-name: linux-4.0
-#            godot-binary: godot.linuxbsd.editor.dev.x86_64
-#            godot-prebuilt-patch: '4.0.4'
-
+            godot-prebuilt-patch: '4.2.2'
 
           # Memory checks: special Godot binaries compiled with AddressSanitizer/LeakSanitizer to detect UB/leaks.
           # See also https://rustc-dev-guide.rust-lang.org/sanitizers.html.
@@ -381,16 +374,6 @@ jobs:
             # Sanitizers can't build proc-macros and build scripts; with --target, cargo ignores RUSTFLAGS for those two.
             rust-target: x86_64-unknown-linux-gnu
 
-          - name: linux-memcheck-4.0
-            os: ubuntu-20.04
-            artifact-name: linux-memcheck-4.0
-            godot-binary: godot.linuxbsd.editor.dev.x86_64.llvm.san
-            godot-prebuilt-patch: '4.0.4'
-            rust-toolchain: nightly
-            rust-env-rustflags: -Zrandomize-layout -Zsanitizer=address
-            # Sanitizers can't build proc-macros and build scripts; with --target, cargo ignores RUSTFLAGS for those two.
-            rust-target: x86_64-unknown-linux-gnu
-
     steps:
       - uses: actions/checkout@v4
 
@@ -412,7 +395,8 @@ jobs:
       - name: "Build and test hot-reload"
         if: ${{ matrix.with-hot-reload }}
         working-directory: examples/hot-reload/godot/test
-        run: ./run-test.sh
+        # Repeat a few times, our hot reload integration test can sometimes be a bit flaky.
+        run: $RETRY ./run-test.sh
         shell: bash
 
 
@@ -431,7 +415,7 @@ jobs:
       - name: "Install Godot"
         uses: ./.github/composite/godot-install
         with:
-          artifact-name: godot-linux-4.2
+          artifact-name: godot-linux-4.3
           godot-binary: godot.linuxbsd.editor.dev.x86_64
 
       - name: "Run examples for short time"

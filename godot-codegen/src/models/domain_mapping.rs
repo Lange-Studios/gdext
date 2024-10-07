@@ -353,11 +353,12 @@ impl BuiltinMethod {
                 name: method.name.clone(),
                 godot_name: method.name.clone(),
                 // Disable default parameters for builtin classes.
-                // They are not public-facing and need more involved implementation (lifetimes etc). Also reduces number of symbols in API.
+                // They are not public-facing and need more involved implementation (lifetimes etc.). Also reduces number of symbols in API.
                 parameters: FnParam::new_range_no_defaults(&method.arguments, ctx),
                 return_value: FnReturn::new(&return_value, ctx),
                 is_vararg: method.is_vararg,
                 is_private: special_cases::is_method_private(builtin_name, &method.name),
+                is_virtual_required: false,
                 direction: FnDirection::Outbound {
                     hash: method.hash.expect("hash absent for builtin method"),
                 },
@@ -455,6 +456,22 @@ impl ClassMethod {
             FnQualifier::from_const_static(is_actually_const, method.is_static)
         };
 
+        // Since Godot 4.4, GDExtension advertises whether virtual methods have a default implementation or are required to be overridden.
+        #[cfg(before_api = "4.4")]
+        let is_virtual_required = special_cases::is_virtual_method_required(
+            &class_name.rust_ty.to_string(),
+            rust_method_name,
+        );
+
+        #[cfg(since_api = "4.4")]
+        let is_virtual_required = method.is_virtual
+            && method.is_required.unwrap_or_else(|| {
+                panic!(
+                    "virtual method {}::{} lacks field `is_required`",
+                    class_name.rust_ty, rust_method_name
+                );
+            });
+
         Some(Self {
             common: FunctionCommon {
                 name: rust_method_name.to_string(),
@@ -463,6 +480,7 @@ impl ClassMethod {
                 return_value: FnReturn::new(&method.return_value, ctx),
                 is_vararg: method.is_vararg,
                 is_private,
+                is_virtual_required,
                 direction,
             },
             qualifier,
@@ -511,6 +529,7 @@ impl UtilityFunction {
                 return_value: FnReturn::new(&return_value, ctx),
                 is_vararg: function.is_vararg,
                 is_private: false,
+                is_virtual_required: false,
                 direction: FnDirection::Outbound {
                     hash: function.hash,
                 },
@@ -560,6 +579,7 @@ impl Enum {
         Self {
             name: ident(&rust_enum_name),
             godot_name: godot_name.clone(),
+            surrounding_class: surrounding_class.cloned(),
             is_bitfield,
             is_private,
             is_exhaustive,

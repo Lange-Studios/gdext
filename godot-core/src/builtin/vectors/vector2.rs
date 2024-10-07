@@ -11,20 +11,44 @@ use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{FloatExt, GlamConv, GlamType};
 use crate::builtin::vectors::Vector2Axis;
-use crate::builtin::{inner, real, RAffine2, RVec2, Vector2i};
+use crate::builtin::{inner, real, RAffine2, RVec2, Vector2i, Vector3};
 
 use std::fmt;
 
 /// Vector used for 2D math using floating point coordinates.
 ///
-/// 2-element structure that can be used to represent positions in 2D space or any other pair of
-/// numeric values.
+/// 2-element structure that can be used to represent continuous positions or directions in 2D space,
+/// as well as any other pair of numeric values.
 ///
 /// It uses floating-point coordinates of 32-bit precision, unlike the engine's `float` type which
 /// is always 64-bit. The engine can be compiled with the option `precision=double` to use 64-bit
 /// vectors; use the gdext library with the `double-precision` feature in that case.
 ///
-/// See [`Vector2i`] for its integer counterpart.
+#[doc = shared_vector_docs!()]
+///
+/// ### Navigation to `impl` blocks within this page
+///
+/// - [Constants](#constants)
+/// - [Constructors and general vector functions](#constructors-and-general-vector-functions)
+/// - [Specialized `Vector2` functions](#specialized-vector2-functions)
+/// - [Float-specific functions](#float-specific-functions)
+/// - [2D functions](#2d-functions)
+/// - [2D and 3D functions](#2d-and-3d-functions)
+/// - [Trait impls + operators](#trait-implementations)
+///
+/// # All vector types
+///
+/// | Dimension | Floating-point                       | Integer                                |
+/// |-----------|--------------------------------------|----------------------------------------|
+/// | 2D        | **`Vector2`**                        | [`Vector2i`][crate::builtin::Vector2i] |
+/// | 3D        | [`Vector3`][crate::builtin::Vector3] | [`Vector3i`][crate::builtin::Vector3i] |
+/// | 4D        | [`Vector4`][crate::builtin::Vector4] | [`Vector4i`][crate::builtin::Vector4i] |
+///
+/// <br>You can convert to 3D vectors using [`to_3d(z)`][Self::to_3d], and to `Vector2i` using [`cast_int()`][Self::cast_int].
+///
+/// # Godot docs
+///
+/// [`Vector2` (stable)](https://docs.godotengine.org/en/stable/classes/class_vector2.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -36,31 +60,36 @@ pub struct Vector2 {
     pub y: real,
 }
 
-impl_vector_operators!(Vector2, real, (x, y));
-
-impl_vector_consts!(Vector2, real);
-impl_float_vector_consts!(Vector2);
-impl_vector2x_consts!(Vector2, real);
+/// # Constants
+impl Vector2 {
+    impl_vector_consts!(real);
+    impl_float_vector_consts!();
+    impl_vector2x_consts!(real);
+}
 
 impl_vector_fns!(Vector2, RVec2, real, (x, y));
-impl_float_vector_fns!(Vector2, (x, y));
-impl_vector2x_fns!(Vector2, real);
-impl_vector2_vector3_fns!(Vector2, (x, y));
 
+/// # Specialized `Vector2` functions
 impl Vector2 {
-    /// Constructs a new `Vector2` from a [`Vector2i`].
+    #[deprecated = "Moved to `Vector2i::cast_float()`"]
     #[inline]
     pub const fn from_vector2i(v: Vector2i) -> Self {
-        Self {
-            x: v.x as real,
-            y: v.y as real,
-        }
+        v.cast_float()
     }
 
-    #[doc(hidden)]
+    /// Creates a unit Vector2 rotated to the given `angle` in radians. This is equivalent to doing `Vector2::new(angle.cos(), angle.sin())`
+    /// or `Vector2::RIGHT.rotated(angle)`.
+    ///
+    /// ```no_run
+    /// use godot::prelude::*;
+    ///
+    /// let a = Vector2::from_angle(0.0);                       // (1.0, 0.0)
+    /// let b = Vector2::new(1.0, 0.0).angle();                 // 0.0
+    /// let c = Vector2::from_angle(real_consts::PI / 2.0);     // (0.0, 1.0)
+    /// ```
     #[inline]
-    pub fn as_inner(&self) -> inner::InnerVector2 {
-        inner::InnerVector2::from_outer(self)
+    pub fn from_angle(angle: real) -> Self {
+        Self::from_glam(RVec2::from_angle(angle))
     }
 
     /// Returns this vector's angle with respect to the positive X axis, or `(1.0, 0.0)` vector, in radians.
@@ -74,6 +103,14 @@ impl Vector2 {
     #[inline]
     pub fn angle(self) -> real {
         self.y.atan2(self.x)
+    }
+
+    /// Returns the **signed** angle between `self` and the given vector, as radians in `[-π, +π]`.
+    ///
+    /// Note that behavior is different from 3D [`Vector3::angle_to()`] which returns the **unsigned** angle.
+    #[inline]
+    pub fn angle_to(self, to: Self) -> real {
+        self.glam2(&to, |a, b| a.angle_to(b))
     }
 
     /// Returns the angle to the given vector, in radians.
@@ -95,21 +132,6 @@ impl Vector2 {
     #[inline]
     pub fn cross(self, with: Self) -> real {
         self.to_glam().perp_dot(with.to_glam())
-    }
-
-    /// Creates a unit Vector2 rotated to the given `angle` in radians. This is equivalent to doing `Vector2::new(angle.cos(), angle.sin())`
-    /// or `Vector2::RIGHT.rotated(angle)`.
-    ///
-    /// ```no_run
-    /// use godot::prelude::*;
-    ///
-    /// let a = Vector2::from_angle(0.0);                       // (1.0, 0.0)
-    /// let b = Vector2::new(1.0, 0.0).angle();                 // 0.0
-    /// let c = Vector2::from_angle(real_consts::PI / 2.0);     // (0.0, 1.0)
-    /// ```
-    #[inline]
-    pub fn from_angle(angle: real) -> Self {
-        Self::from_glam(RVec2::from_angle(angle))
     }
 
     /// Returns a perpendicular vector rotated 90 degrees counter-clockwise compared to the original, with the same length.
@@ -141,7 +163,19 @@ impl Vector2 {
         let angle = self.angle_to(to);
         self.rotated(angle * weight) * (result_length / start_length)
     }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn as_inner(&self) -> inner::InnerVector2 {
+        inner::InnerVector2::from_outer(self)
+    }
 }
+
+impl_float_vector_fns!(Vector2, Vector2i, (x, y));
+impl_vector2x_fns!(Vector2, Vector3, real);
+impl_vector2_vector3_fns!(Vector2, (x, y));
+
+impl_vector_operators!(Vector2, real, (x, y));
 
 /// Formats the vector like Godot: `(x, y)`.
 impl fmt::Display for Vector2 {
@@ -191,6 +225,14 @@ mod test {
 
         assert_eq_approx!(a.coord_min(b), Vector2::new(0.1, 3.4));
         assert_eq_approx!(a.coord_max(b), Vector2::new(1.2, 5.6));
+    }
+
+    #[test]
+    fn sign() {
+        let vector = Vector2::new(0.2, -0.5);
+        assert_eq!(vector.sign(), Vector2::new(1., -1.));
+        let vector = Vector2::new(0.1, 0.0);
+        assert_eq!(vector.sign(), Vector2::new(1., 0.));
     }
 
     #[cfg(feature = "serde")]

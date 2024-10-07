@@ -25,6 +25,21 @@ use super::{Aabb, Rect2, Vector3};
 /// more performant and has a lower memory footprint.
 ///
 /// This builtin comes with two related types [`ProjectionEye`] and [`ProjectionPlane`], that are type-safe pendants to Godot's integers.
+///
+/// # All matrix types
+///
+/// | Dimension | Orthogonal basis | Affine transform      | Projective transform   |
+/// |-----------|------------------|-----------------------|------------------------|
+/// | 2D        |                  | [`Transform2D`] (2x3) |                        |
+/// | 3D        | [`Basis`] (3x3)  | [`Transform3D`] (3x4) | **`Projection`** (4x4) |
+///
+/// [`Basis`]: crate::builtin::Basis
+/// [`Transform2D`]: crate::builtin::Transform2D
+/// [`Transform3D`]: Transform3D
+///
+/// # Godot docs
+///
+/// [`Projection` (stable)](https://docs.godotengine.org/en/stable/classes/class_projection.html)
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -551,28 +566,6 @@ pub enum ProjectionPlane {
     BOTTOM = 5,
 }
 
-#[allow(non_upper_case_globals)]
-#[doc(hidden)] // No longer advertise in API docs.
-impl ProjectionPlane {
-    #[deprecated(note = "Renamed to `ProjectionPlane::NEAR`")]
-    pub const Near: Self = Self::NEAR;
-
-    #[deprecated(note = "Renamed to `ProjectionPlane::FAR`")]
-    pub const Far: Self = Self::FAR;
-
-    #[deprecated(note = "Renamed to `ProjectionPlane::LEFT`")]
-    pub const Left: Self = Self::LEFT;
-
-    #[deprecated(note = "Renamed to `ProjectionPlane::TOP`")]
-    pub const Top: Self = Self::TOP;
-
-    #[deprecated(note = "Renamed to `ProjectionPlane::RIGHT`")]
-    pub const Right: Self = Self::RIGHT;
-
-    #[deprecated(note = "Renamed to `ProjectionPlane::BOTTOM`")]
-    pub const Bottom: Self = Self::BOTTOM;
-}
-
 impl ProjectionPlane {
     /// Convert from one of GDScript's `Projection.PLANE_*` integer constants.
     pub fn try_from_ord(ord: i64) -> Option<Self> {
@@ -594,15 +587,6 @@ impl ProjectionPlane {
 pub enum ProjectionEye {
     LEFT = 1,
     RIGHT = 2,
-}
-
-#[allow(non_upper_case_globals)]
-impl ProjectionEye {
-    #[deprecated(note = "Renamed to `ProjectionEye::LEFT`")]
-    pub const Left: Self = Self::LEFT;
-
-    #[deprecated(note = "Renamed to `ProjectionEye::RIGHT`")]
-    pub const Right: Self = Self::RIGHT;
 }
 
 impl ProjectionEye {

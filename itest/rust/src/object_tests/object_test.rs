@@ -13,6 +13,7 @@ use godot::classes::{
     file_access, Area2D, Camera3D, Engine, FileAccess, IRefCounted, Node, Node3D, Object,
     RefCounted,
 };
+#[allow(deprecated)]
 use godot::global::instance_from_id;
 use godot::meta::{FromGodot, GodotType, ToGodot};
 use godot::obj::{Base, Gd, Inherits, InstanceId, NewAlloc, NewGd, RawGd};
@@ -67,7 +68,9 @@ fn object_user_roundtrip_write() {
 
     let obj: Gd<RefcPayload> = Gd::from_object(user);
     assert_eq!(obj.bind().value, value);
-    let raw = obj.to_ffi();
+
+    // Use into_ffi() instead of to_ffi(), as the latter returns a reference and isn't used for returns anymore.
+    let raw = obj.into_ffi();
 
     let raw2 = unsafe {
         RawGd::<RefcPayload>::new_with_uninit(|ptr| {
@@ -93,6 +96,20 @@ fn object_engine_roundtrip() {
     let obj2 = Gd::from_ffi(raw2);
     assert_eq!(obj2.get_position(), pos);
     obj.free();
+}
+
+#[itest]
+fn object_null_argument() {
+    // Objects currently use ObjectArg instead of RefArg, so this scenario shouldn't occur. Test can be updated if code is refactored.
+
+    let null_obj = Option::<Gd<Node>>::None;
+
+    let via = null_obj.to_godot();
+    let ffi = via.to_ffi();
+
+    expect_panic("not yet implemented: pass objects through RefArg", || {
+        ffi.to_godot();
+    });
 }
 
 #[itest]
@@ -171,6 +188,7 @@ fn object_instance_from_id() {
 
     let instance_id = node.instance_id();
 
+    #[allow(deprecated)]
     let gd_from_instance_id = instance_from_id(instance_id.to_i64())
         .expect("instance should be valid")
         .cast::<Node>();
@@ -182,6 +200,7 @@ fn object_instance_from_id() {
 
 #[itest]
 fn object_instance_from_invalid_id() {
+    #[allow(deprecated)]
     let gd_from_instance_id = instance_from_id(0);
 
     assert!(
@@ -834,7 +853,7 @@ fn object_get_scene_tree(ctx: &TestContext) {
     let node = Node3D::new_alloc();
 
     let mut tree = ctx.scene_tree.clone();
-    tree.add_child(node.upcast());
+    tree.add_child(node);
 
     let count = tree.get_child_count();
     assert_eq!(count, 1);
@@ -878,7 +897,7 @@ impl ObjPayload {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
 #[inline(never)] // force to move "out of scope", can trigger potential dangling pointer errors
-fn user_refc_instance() -> Gd<RefcPayload> {
+pub(super) fn user_refc_instance() -> Gd<RefcPayload> {
     let value: i16 = 17943;
     let user = RefcPayload { value };
     Gd::from_object(user)
@@ -886,7 +905,8 @@ fn user_refc_instance() -> Gd<RefcPayload> {
 
 #[derive(GodotClass, Eq, PartialEq, Debug)]
 pub struct RefcPayload {
-    value: i16,
+    #[var]
+    pub(super) value: i16,
 }
 
 #[godot_api]
@@ -1056,12 +1076,3 @@ fn double_use_reference() {
     double_use.free();
     emitter.free();
 }
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-
-// There isn't a good way to test editor plugins, but we can at least declare one to ensure that the macro
-// compiles.
-#[cfg(since_api = "4.1")]
-#[derive(GodotClass)]
-#[class(no_init, base = EditorPlugin, editor_plugin, tool)]
-struct CustomEditorPlugin;

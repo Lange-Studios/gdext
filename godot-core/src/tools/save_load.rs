@@ -7,8 +7,8 @@
 
 use crate::builtin::GString;
 use crate::classes::{Resource, ResourceLoader, ResourceSaver};
-use crate::engine::IoError;
 use crate::global::Error as GodotError;
+use crate::meta::error::IoError;
 use crate::obj::{Gd, Inherits};
 
 /// ⚠️ Loads a resource from the filesystem located at `path`, panicking on error.
@@ -164,7 +164,7 @@ where
 {
     // TODO unclone GString
     let res = ResourceSaver::singleton()
-        .save_ex(obj.upcast())
+        .save_ex(obj)
         .path(path.clone())
         .done();
 

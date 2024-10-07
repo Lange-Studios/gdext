@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::borrow::Cow;
 use std::fmt;
 use std::fmt::Debug;
 
@@ -13,7 +14,7 @@ use sys::{BuiltinMethodBind, ClassMethodBind, GodotFfi, UtilityFunctionBind};
 
 use crate::builtin::Variant;
 use crate::meta::error::{CallError, ConvertError};
-use crate::meta::godot_convert::{into_ffi, try_from_ffi};
+use crate::meta::godot_convert::{into_ffi_variant, try_from_ffi};
 use crate::meta::*;
 use crate::obj::{GodotClass, InstanceId};
 
@@ -118,23 +119,6 @@ pub trait PtrcallSignatureTuple {
     ) -> Self::Ret;
 }
 
-// impl<P, const N: usize> Sig for [P; N]
-// impl<P, T0> Sig for (T0)
-// where P: VariantMetadata {
-//     fn variant_type(index: usize) -> sys::GDExtensionVariantType {
-//           Self[index]::
-//     }
-//
-//     fn param_metadata(index: usize) -> sys::GDExtensionClassMethodArgumentMetadata {
-//         todo!()
-//     }
-//
-//     fn property_info(index: usize, param_name: &str) -> sys::GDExtensionPropertyInfo {
-//         todo!()
-//     }
-// }
-//
-
 macro_rules! impl_varcall_signature_for_tuple {
     (
         $PARAM_COUNT:literal;
@@ -224,7 +208,7 @@ macro_rules! impl_varcall_signature_for_tuple {
 
                 let explicit_args = [
                     $(
-                        GodotFfiVariant::ffi_to_variant(&into_ffi($pn)),
+                       into_ffi_variant(&$pn),
                     )*
                 ];
 
@@ -269,7 +253,7 @@ macro_rules! impl_varcall_signature_for_tuple {
                 let object_call_script_method = sys::interface_fn!(object_call_script_method);
                 let explicit_args = [
                     $(
-                        GodotFfiVariant::ffi_to_variant(&into_ffi($pn)),
+                        into_ffi_variant(&$pn),
                     )*
                 ];
 
@@ -304,7 +288,7 @@ macro_rules! impl_varcall_signature_for_tuple {
 
                 let explicit_args: [Variant; $PARAM_COUNT] = [
                     $(
-                        GodotFfiVariant::ffi_to_variant(&into_ffi($pn)),
+                       into_ffi_variant(&$pn),
                     )*
                 ];
 
@@ -330,6 +314,31 @@ macro_rules! impl_varcall_signature_for_tuple {
             }
         }
     };
+}
+
+macro_rules! marshal_args {
+    (
+        let $out:ident = $( $pn:ident: $n:tt )* ;
+    ) => {
+        // Note: this used to be done in a single `into_ffi()` function, however with reference semantics, this causes issues with lifetimes:
+        // The to_godot() call creates a temporary value local to the function, and even when using the same 'v lifetime throughout, rustc
+        // assumes that the temporary value may store other state that would go out of scope after the function returns.
+        // Thus, this is now done in 2 steps, and abstracted with a macro.
+
+        #[allow(clippy::let_unit_value)]
+        let vias = (
+            $(
+                ToGodot::to_godot(&$pn),
+            )*
+        );
+
+        #[allow(clippy::let_unit_value)]
+        let $out = (
+            $(
+                GodotType::to_ffi(&vias.$n),
+            )*
+        );
+    }
 }
 
 macro_rules! impl_ptrcall_signature_for_tuple {
@@ -388,12 +397,9 @@ macro_rules! impl_ptrcall_signature_for_tuple {
 
                 let class_fn = sys::interface_fn!(object_method_bind_ptrcall);
 
-                #[allow(clippy::let_unit_value)]
-                let marshalled_args = (
-                    $(
-                        into_ffi($pn),
-                    )*
-                );
+                marshal_args! {
+                    let marshalled_args = $($pn: $n)*;
+                }
 
                 let type_ptrs = [
                     $(
@@ -419,12 +425,9 @@ macro_rules! impl_ptrcall_signature_for_tuple {
                 let call_ctx = CallContext::outbound(class_name, method_name);
                 // $crate::out!("out_builtin_ptrcall: {call_ctx}");
 
-                #[allow(clippy::let_unit_value)]
-                let marshalled_args = (
-                    $(
-                        into_ffi($pn),
-                    )*
-                );
+                marshal_args! {
+                    let marshalled_args = $($pn: $n)*;
+                }
 
                 let type_ptrs = [
                     $(
@@ -447,12 +450,9 @@ macro_rules! impl_ptrcall_signature_for_tuple {
                 let call_ctx = CallContext::outbound("", function_name);
                 // $crate::out!("out_utility_ptrcall: {call_ctx}");
 
-                #[allow(clippy::let_unit_value)]
-                let marshalled_args = (
-                    $(
-                        into_ffi($pn),
-                    )*
-                );
+                marshal_args! {
+                    let marshalled_args = $($pn: $n)*;
+                }
 
                 let arg_ptrs = [
                     $(
@@ -547,8 +547,10 @@ unsafe fn ptrcall_return<R: ToGodot>(
     _call_ctx: &CallContext,
     call_type: sys::PtrcallType,
 ) {
-    let val = into_ffi(ret_val);
-    val.move_return_ptr(ret, call_type);
+    let val = ret_val.to_godot();
+    let ffi = val.into_ffi();
+
+    ffi.move_return_ptr(ret, call_type);
 }
 
 fn param_error<P>(call_ctx: &CallContext, index: i32, err: ConvertError) -> ! {
@@ -614,15 +616,23 @@ impl_ptrcall_signature_for_tuple!(R, (p0, 0): P0, (p1, 1): P1, (p2, 2): P2, (p3,
 #[derive(Clone)]
 #[doc(hidden)] // currently exposed in godot::meta
 pub struct CallContext<'a> {
-    pub class_name: &'a str,
-    pub function_name: &'a str,
+    pub(crate) class_name: Cow<'a, str>,
+    pub(crate) function_name: &'a str,
 }
 
 impl<'a> CallContext<'a> {
     /// Call from Godot into a user-defined #[func] function.
     pub const fn func(class_name: &'a str, function_name: &'a str) -> Self {
         Self {
-            class_name,
+            class_name: Cow::Borrowed(class_name),
+            function_name,
+        }
+    }
+
+    /// Call from Godot into a custom Callable.
+    pub fn custom_callable(function_name: &'a str) -> Self {
+        Self {
+            class_name: Cow::Borrowed("<Callable>"),
             function_name,
         }
     }
@@ -630,16 +640,15 @@ impl<'a> CallContext<'a> {
     /// Outbound call from Rust into the engine, class/builtin APIs.
     pub const fn outbound(class_name: &'a str, function_name: &'a str) -> Self {
         Self {
-            class_name,
+            class_name: Cow::Borrowed(class_name),
             function_name,
         }
     }
 
     /// Outbound call from Rust into the engine, via Gd methods.
     pub fn gd<T: GodotClass>(function_name: &'a str) -> Self {
-        let class_name = T::class_name().as_str();
         Self {
-            class_name,
+            class_name: T::class_name().to_cow_str(),
             function_name,
         }
     }
@@ -655,9 +664,9 @@ impl<'a> fmt::Display for CallContext<'a> {
 // Trace diagnostics for integration tests
 #[cfg(feature = "trace")]
 pub mod trace {
-    use crate::meta::CallContext;
+    use std::cell::Cell;
 
-    use super::sys::Global;
+    use crate::meta::CallContext;
 
     /// Stores information about the current call for diagnostic purposes.
     pub struct CallReport {
@@ -668,7 +677,7 @@ pub mod trace {
     }
 
     pub fn pop() -> CallReport {
-        let lock = TRACE.lock().take();
+        let lock = TRACE.take();
         // let th = std::thread::current().id();
         // println!("trace::pop [{th:?}]...");
 
@@ -689,8 +698,10 @@ pub mod trace {
             is_ptrcall: ptrcall,
         };
 
-        *TRACE.lock() = Some(report);
+        TRACE.set(Some(report));
     }
 
-    static TRACE: Global<Option<CallReport>> = Global::default();
+    thread_local! {
+        static TRACE: Cell<Option<CallReport>> = Cell::default();
+    }
 }

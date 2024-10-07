@@ -1,8 +1,8 @@
 [package]
 name = "godot-core"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.80"
 license = "MPL-2.0"
 keywords = ["gamedev", "godot", "engine", "2d", "3d"] # possibly: "ffi"
 categories = ["game-engines", "graphics"]
@@ -12,6 +12,7 @@ homepage = "https://godot-rust.github.io"
 
 [features]
 default = []
+docs = []
 codegen-rustfmt = ["godot-ffi/codegen-rustfmt", "godot-codegen/codegen-rustfmt"]
 codegen-full = ["godot-codegen/codegen-full"]
 codegen-lazy-fptrs = [
@@ -20,18 +21,14 @@ codegen-lazy-fptrs = [
 ]
 double-precision = ["godot-codegen/double-precision"]
 experimental-godot-api = ["godot-codegen/experimental-godot-api"]
-experimental-threads = ["godot-ffi/experimental-threads"]
+experimental-threads = ["godot-ffi/experimental-threads", "godot-codegen/experimental-threads"]
+experimental-wasm-nothreads = ["godot-ffi/experimental-wasm-nothreads"]
 debug-log = ["godot-ffi/debug-log"]
 trace = []
 
 api-custom = ["godot-ffi/api-custom", "godot-codegen/api-custom"]
 # [version-sync] [[
 #  [line] api-$kebabVersion = ["godot-ffi/api-$kebabVersion"]
-api-4-0 = ["godot-ffi/api-4-0"]
-api-4-0-1 = ["godot-ffi/api-4-0-1"]
-api-4-0-2 = ["godot-ffi/api-4-0-2"]
-api-4-0-3 = ["godot-ffi/api-4-0-3"]
-api-4-0-4 = ["godot-ffi/api-4-0-4"]
 api-4-1 = ["godot-ffi/api-4-1"]
 api-4-1-1 = ["godot-ffi/api-4-1-1"]
 api-4-1-2 = ["godot-ffi/api-4-1-2"]
@@ -40,23 +37,24 @@ api-4-1-4 = ["godot-ffi/api-4-1-4"]
 api-4-2 = ["godot-ffi/api-4-2"]
 api-4-2-1 = ["godot-ffi/api-4-2-1"]
 api-4-2-2 = ["godot-ffi/api-4-2-2"]
+api-4-3 = ["godot-ffi/api-4-3"]
 # ]]
 
 [dependencies]
-godot-ffi = { path = "../godot-ffi", version = "=0.1.1" }
+godot-ffi = { path = "../godot-ffi", version = "=0.1.3" }
 
 # See https://docs.rs/glam/latest/glam/index.html#feature-gates
-glam = { version = "0.27", features = ["debug-glam-assert"] }
+glam = { version = "0.28", features = ["debug-glam-assert"] }
 serde = { version = "1", features = ["derive"], optional = true }
-godot-cell = { path = "../godot-cell", version = "=0.1.1" }
+godot-cell = { path = "../godot-cell", version = "=0.1.3" }
 
 [build-dependencies]
-godot-bindings = { path = "../godot-bindings", version = "=0.1.1" }
-godot-codegen = { path = "../godot-codegen", version = "=0.1.1" }
+godot-bindings = { path = "../godot-bindings", version = "=0.1.3" }
+godot-codegen = { path = "../godot-codegen", version = "=0.1.3" }
 
 # Reverse dev dependencies so doctests can use `godot::` prefix.
 [dev-dependencies]
-godot = { path = "../godot" }
+godot = { path = "../godot", default-features = false }
 serde_json = { version = "1.0" }
 
 # https://docs.rs/about/metadata

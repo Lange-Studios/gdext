@@ -8,9 +8,9 @@
 use godot::builtin::{dict, Color, Dictionary, GString, Variant, VariantType};
 use godot::classes::{INode, IRefCounted, Node, Object, RefCounted, Resource, Texture};
 use godot::global::{PropertyHint, PropertyUsageFlags};
-use godot::meta::{GodotConvert, ToGodot};
+use godot::meta::{GodotConvert, PropertyHintInfo, ToGodot};
 use godot::obj::{Base, EngineBitfield, EngineEnum, Gd, NewAlloc, NewGd};
-use godot::register::property::{Export, PropertyHintInfo, Var};
+use godot::register::property::{Export, Var};
 use godot::register::{godot_api, Export, GodotClass, GodotConvert, Var};
 use godot::test::itest;
 
@@ -174,7 +174,7 @@ impl Var for SomeCStyleEnum {
 }
 
 impl Export for SomeCStyleEnum {
-    fn default_export_info() -> PropertyHintInfo {
+    fn export_hint() -> PropertyHintInfo {
         PropertyHintInfo {
             hint: PropertyHint::ENUM,
             hint_string: "A,B,C".into(),
@@ -239,10 +239,11 @@ struct CheckAllExports {
     #[export]
     normal: GString,
 
-    #[export(range = (0.0, 10.0, or_greater, or_less, exp, radians, hide_slider))]
+    // `suffix = "px"` should be in the third slot to test that key-value pairs in that position no longer error.
+    #[export(range = (0.0, 10.0, suffix = "px", or_greater, or_less, exp, degrees, hide_slider))]
     range_exported: f64,
 
-    #[export(range = (0.0, 10.0, 0.2, or_greater, or_less, exp, radians, hide_slider))]
+    #[export(range = (0.0, 10.0, 0.2, or_greater, or_less, exp, radians_as_degrees, hide_slider))]
     range_exported_with_step: f64,
 
     #[export(enum = (A = 10, B, C, D = 20))]
@@ -316,21 +317,23 @@ pub enum TestEnum {
 #[class(no_init)]
 pub struct DeriveProperty {
     #[var]
-    pub foo: TestEnum,
+    pub my_enum: TestEnum,
 }
 
 #[itest]
 fn derive_property() {
-    let mut class = DeriveProperty { foo: TestEnum::B };
-    assert_eq!(class.get_foo(), TestEnum::B as i64);
-    class.set_foo(TestEnum::C as i64);
-    assert_eq!(class.foo, TestEnum::C);
+    let mut class = DeriveProperty {
+        my_enum: TestEnum::B,
+    };
+    assert_eq!(class.get_my_enum(), TestEnum::B as i64);
+    class.set_my_enum(TestEnum::C as i64);
+    assert_eq!(class.my_enum, TestEnum::C);
 }
 
 #[derive(GodotClass)]
 pub struct DeriveExport {
     #[export]
-    pub foo: TestEnum,
+    pub my_enum: TestEnum,
 
     // Tests also qualified base path (type inference of Base<T> without #[hint]).
     pub base: godot::obj::Base<RefCounted>,
@@ -340,7 +343,7 @@ pub struct DeriveExport {
 impl IRefCounted for DeriveExport {
     fn init(base: godot::obj::Base<Self::Base>) -> Self {
         Self {
-            foo: TestEnum::B,
+            my_enum: TestEnum::B,
             base,
         }
     }
@@ -353,7 +356,7 @@ fn derive_export() {
     let property = class
         .get_property_list()
         .iter_shared()
-        .find(|c| c.get_or_nil("name") == "foo".to_variant())
+        .find(|c| c.get_or_nil("name") == "my_enum".to_variant())
         .unwrap();
     // `class_name` should be empty for non-Object variants.
     check_property(&property, "class_name", "");
@@ -376,10 +379,10 @@ pub struct RenamedCustomResource {}
 pub struct ExportResource {
     #[export]
     #[var(usage_flags=[DEFAULT, EDITOR_INSTANTIATE_OBJECT])]
-    pub foo: Option<Gd<CustomResource>>,
+    pub my_resource: Option<Gd<CustomResource>>,
 
     #[export]
-    pub bar: Option<Gd<RenamedCustomResource>>,
+    pub renamed_resource: Option<Gd<RenamedCustomResource>>,
 }
 
 #[itest]
@@ -389,7 +392,7 @@ fn export_resource() {
     let property = class
         .get_property_list()
         .iter_shared()
-        .find(|c| c.get_or_nil("name") == "foo".to_variant())
+        .find(|c| c.get_or_nil("name") == "my_resource".to_variant())
         .unwrap();
     check_property(&property, "class_name", "CustomResource");
     check_property(&property, "type", VariantType::OBJECT.ord());
@@ -404,7 +407,7 @@ fn export_resource() {
     let property = class
         .get_property_list()
         .iter_shared()
-        .find(|c| c.get_or_nil("name") == "bar".to_variant())
+        .find(|c| c.get_or_nil("name") == "renamed_resource".to_variant())
         .unwrap();
     check_property(&property, "class_name", "NewNameCustomResource");
     check_property(&property, "type", VariantType::OBJECT.ord());
@@ -418,7 +421,7 @@ fn export_resource() {
 #[derive(GodotClass)]
 #[class(init)]
 struct ExportOverride {
-    // This is really a non-sensical set of values, but they're different from what `#[export]` here would generate.
+    // This is really a nonsensical set of values, but they're different from what `#[export]` here would generate.
     // So we should be able to ensure that we can override the values `#[export]` generates.
     #[export]
     #[var(

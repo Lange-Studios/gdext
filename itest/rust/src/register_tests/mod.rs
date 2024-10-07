@@ -7,10 +7,13 @@
 
 mod constant_test;
 mod conversion_test;
-mod derive_variant_test;
+mod derive_godotconvert_test;
 mod func_test;
 mod gdscript_ffi_test;
+mod naming_tests;
 mod option_ffi_test;
+#[cfg(feature = "codegen-full")]
+mod rpc_test;
 mod var_test;
 
 #[cfg(since_api = "4.3")]

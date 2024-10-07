@@ -6,12 +6,14 @@
  */
 
 mod base_test;
+mod class_name_test;
 mod class_rename_test;
 mod dynamic_call_test;
-// `get_property_list` is only supported in godot 4.3+
+// `get_property_list` is only supported in Godot 4.3+
 #[cfg(since_api = "4.3")]
 mod get_property_list_test;
 mod init_level_test;
+mod object_arg_test;
 mod object_swap_test;
 mod object_test;
 mod onready_test;

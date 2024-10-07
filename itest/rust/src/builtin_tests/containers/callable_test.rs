@@ -4,13 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-
 use godot::builtin::inner::InnerCallable;
 use godot::builtin::{varray, Callable, GString, StringName, Variant};
 use godot::classes::{Node2D, Object};
 use godot::meta::ToGodot;
 use godot::obj::{NewAlloc, NewGd};
 use godot::register::{godot_api, GodotClass};
+use std::fmt::{Display, Formatter};
+use std::hash::Hasher;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::framework::itest;
 
@@ -83,19 +85,19 @@ fn callable_call() {
     let callable = obj.callable("foo");
 
     assert_eq!(obj.bind().value, 0);
-    callable.callv(varray![10]);
+    callable.callv(&varray![10]);
     assert_eq!(obj.bind().value, 10);
 
     // Too many arguments: this call fails, its logic is not applied.
     // In the future, panic should be propagated to caller.
-    callable.callv(varray![20, 30]);
+    callable.callv(&varray![20, 30]);
     assert_eq!(obj.bind().value, 10);
 
     // TODO(bromeon): this causes a Rust panic, but since call() is routed to Godot, the panic is handled at the FFI boundary.
     // Can there be a way to notify the caller about failed calls like that?
-    assert_eq!(callable.callv(varray!["string"]), Variant::nil());
+    assert_eq!(callable.callv(&varray!["string"]), Variant::nil());
 
-    assert_eq!(Callable::invalid().callv(varray![1, 2, 3]), Variant::nil());
+    assert_eq!(Callable::invalid().callv(&varray![1, 2, 3]), Variant::nil());
 }
 
 #[itest]
@@ -104,11 +106,11 @@ fn callable_call_return() {
     let callable = obj.callable("bar");
 
     assert_eq!(
-        callable.callv(varray![10]),
+        callable.callv(&varray![10]),
         10.to_variant().stringify().to_variant()
     );
     // errors in godot but does not crash
-    assert_eq!(callable.callv(varray!["string"]), Variant::nil());
+    assert_eq!(callable.callv(&varray!["string"]), Variant::nil());
 }
 
 #[itest]
@@ -135,10 +137,10 @@ fn callable_call_engine() {
 fn callable_bindv() {
     let obj = CallableTestObj::new_gd();
     let callable = obj.callable("bar");
-    let callable_bound = callable.bindv(varray![10]);
+    let callable_bound = callable.bindv(&varray![10]);
 
     assert_eq!(
-        callable_bound.callv(varray![]),
+        callable_bound.callv(&varray![]),
         10.to_variant().stringify().to_variant()
     );
 }
@@ -159,10 +161,11 @@ impl CallableRefcountTest {
 // Tests and infrastructure for custom callables
 
 #[cfg(since_api = "4.2")]
-mod custom_callable {
+pub mod custom_callable {
     use super::*;
     use crate::framework::assert_eq_self;
-    use godot::builtin::Dictionary;
+    use godot::builtin::{Dictionary, RustCallable};
+    use godot::sys::GdextBuild;
     use std::fmt;
     use std::hash::Hash;
     use std::sync::{Arc, Mutex};
@@ -176,14 +179,14 @@ mod custom_callable {
         assert!(callable.is_custom());
         assert!(callable.object().is_none());
 
-        let sum1 = callable.callv(varray![1, 2, 4, 8]);
+        let sum1 = callable.callv(&varray![1, 2, 4, 8]);
         assert_eq!(sum1, 15.to_variant());
 
-        let sum2 = callable.callv(varray![5]);
+        let sum2 = callable.callv(&varray![5]);
         assert_eq!(sum2, 5.to_variant());
 
         // Important to test 0 arguments, as the FFI call passes a null pointer for the argument array.
-        let sum3 = callable.callv(varray![]);
+        let sum3 = callable.callv(&varray![]);
         assert_eq!(sum3, 0.to_variant());
     }
 
@@ -212,10 +215,10 @@ mod custom_callable {
         assert!(callable.is_custom());
         assert!(callable.object().is_none());
 
-        let sum1 = callable.callv(varray![3, 9, 2, 1]);
+        let sum1 = callable.callv(&varray![3, 9, 2, 1]);
         assert_eq!(sum1, 15.to_variant());
 
-        let sum2 = callable.callv(varray![4]);
+        let sum2 = callable.callv(&varray![4]);
         assert_eq!(sum2, 19.to_variant());
     }
 
@@ -283,8 +286,35 @@ mod custom_callable {
         dict.set(b, "hi");
         assert_eq!(hash_count(&at), 1, "hash for a untouched if b is inserted");
         assert_eq!(hash_count(&bt), 1, "hash needed for b dict key");
-        assert_eq!(eq_count(&at), 1, "hash collision, eq for a needed");
-        assert_eq!(eq_count(&bt), 1, "hash collision, eq for b needed");
+
+        // Introduced in https://github.com/godotengine/godot/pull/96797.
+        let eq = if GdextBuild::since_api("4.4") { 2 } else { 1 };
+
+        assert_eq!(eq_count(&at), eq, "hash collision, eq for a needed");
+        assert_eq!(eq_count(&bt), eq, "hash collision, eq for b needed");
+    }
+
+    #[itest]
+    fn callable_callv_panic_from_fn() {
+        let received = Arc::new(AtomicU32::new(0));
+        let received_callable = received.clone();
+        let callable = Callable::from_fn("test", move |_args| {
+            panic!("TEST: {}", received_callable.fetch_add(1, Ordering::SeqCst))
+        });
+
+        assert_eq!(Variant::nil(), callable.callv(&varray![]));
+
+        assert_eq!(1, received.load(Ordering::SeqCst));
+    }
+
+    #[itest]
+    fn callable_callv_panic_from_custom() {
+        let received = Arc::new(AtomicU32::new(0));
+        let callable = Callable::from_custom(PanicCallable(received.clone()));
+
+        assert_eq!(Variant::nil(), callable.callv(&varray![]));
+
+        assert_eq!(1, received.load(Ordering::SeqCst));
     }
 
     struct Adder {
@@ -364,6 +394,32 @@ mod custom_callable {
 
     fn hash_count(tracker: &Arc<Mutex<Tracker>>) -> usize {
         tracker.lock().unwrap().hash_counter
+    }
+
+    pub struct PanicCallable(pub Arc<AtomicU32>);
+
+    impl PartialEq for PanicCallable {
+        fn eq(&self, other: &Self) -> bool {
+            Arc::ptr_eq(&self.0, &other.0)
+        }
+    }
+
+    impl Hash for PanicCallable {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            state.write_usize(Arc::as_ptr(&self.0) as usize)
+        }
+    }
+
+    impl Display for PanicCallable {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "test")
+        }
+    }
+
+    impl RustCallable for PanicCallable {
+        fn invoke(&mut self, _args: &[&Variant]) -> Result<Variant, ()> {
+            panic!("TEST: {}", self.0.fetch_add(1, Ordering::SeqCst))
+        }
     }
 }
 

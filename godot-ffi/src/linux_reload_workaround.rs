@@ -40,7 +40,7 @@ pub fn disable_hot_reload() {
 }
 
 pub fn default_set_hot_reload() {
-    // By default we enable hot reloading for debug builds, as it's likely that the user may want hot reloading in debug builds.
+    // By default, we enable hot reloading for debug builds, as it's likely that the user may want hot reloading in debug builds.
     // Release builds however should avoid leaking memory, so we disable hot reloading support by default.
     if cfg!(debug_assertions) {
         enable_hot_reload()
@@ -70,7 +70,8 @@ pub unsafe fn thread_atexit(func: *mut c_void, obj: *mut c_void, dso_symbol: *mu
     } else if let Some(system_thread_atexit) = *system_thread_atexit() {
         // Hot reloading is disabled, and system provides `__cxa_thread_atexit_impl`,
         // so forward the call to it.
-        system_thread_atexit(func, obj, dso_symbol);
+        // SAFETY: Is only called by the system when thread_atexit should be called.
+        unsafe { system_thread_atexit(func, obj, dso_symbol) };
     } else {
         // Hot reloading is disabled *and* we don't have `__cxa_thread_atexit_impl`,
         // throw hands up in the air and leak memory.

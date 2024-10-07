@@ -9,7 +9,7 @@ use godot_ffi as sys;
 
 use crate::builtin::{inner, StringName, Variant, VariantArray};
 use crate::classes::Object;
-use crate::meta::{GodotType, ToGodot};
+use crate::meta::{CallContext, GodotType, ToGodot};
 use crate::obj::bounds::DynMemory;
 use crate::obj::Bounds;
 use crate::obj::{Gd, GodotClass, InstanceId};
@@ -22,9 +22,13 @@ use sys::{ffi_methods, GodotFfi};
 /// also be a custom callable, which is usually created from `bind`, `unbind`, or a GDScript lambda. See
 /// [`Callable::is_custom`].
 ///
-/// Currently it is impossible to use `bind` and `unbind` in GDExtension, see [godot-cpp#802].
+/// Currently, it is impossible to use `bind` and `unbind` in GDExtension, see [godot-cpp#802].
 ///
 /// [godot-cpp#802]: https://github.com/godotengine/godot-cpp/issues/802
+///
+/// # Godot docs
+///
+/// [`Callable` (stable)](https://docs.godotengine.org/en/stable/classes/class_callable.html)
 pub struct Callable {
     opaque: sys::types::OpaqueCallable,
 }
@@ -47,7 +51,7 @@ impl Callable {
         // upcast not needed
         let method = method_name.into();
         unsafe {
-            sys::new_with_uninit_or_init::<Self>(|self_ptr| {
+            Self::new_with_uninit(|self_ptr| {
                 let ctor = sys::builtin_fn!(callable_from_object_method);
                 let raw = object.to_ffi();
                 let args = [raw.as_arg_ptr(), method.sys()];
@@ -145,7 +149,7 @@ impl Callable {
         }
     }
 
-    /// Creates an invalid/empty object that is not able to be called.
+    /// Creates an invalid/empty object that cannot be called.
     ///
     /// _Godot equivalent: `Callable()`_
     pub fn invalid() -> Self {
@@ -169,14 +173,14 @@ impl Callable {
     /// - If called on an invalid Callable then no error is printed, and `NIL` is returned.
     ///
     /// _Godot equivalent: `callv`_
-    pub fn callv(&self, arguments: VariantArray) -> Variant {
+    pub fn callv(&self, arguments: &VariantArray) -> Variant {
         self.as_inner().callv(arguments)
     }
 
     /// Returns a copy of this Callable with one or more arguments bound, reading them from an array.
     ///
     /// _Godot equivalent: `bindv`_
-    pub fn bindv(&self, arguments: VariantArray) -> Self {
+    pub fn bindv(&self, arguments: &VariantArray) -> Self {
         self.as_inner().bindv(arguments)
     }
 
@@ -388,10 +392,19 @@ mod custom_callable {
     ) {
         let arg_refs: &[&Variant] = Variant::borrow_ref_slice(p_args, p_argument_count as usize);
 
-        let c: &mut C = CallableUserdata::inner_from_raw(callable_userdata);
+        let name = {
+            let c: &C = CallableUserdata::inner_from_raw(callable_userdata);
+            c.to_string()
+        };
+        let ctx = CallContext::custom_callable(name.as_str());
 
-        let result = c.invoke(arg_refs);
-        crate::meta::varcall_return_checked(result, r_return, r_error);
+        crate::private::handle_varcall_panic(&ctx, &mut *r_error, move || {
+            // Get the RustCallable again inside closure so it doesn't have to be UnwindSafe.
+            let c: &mut C = CallableUserdata::inner_from_raw(callable_userdata);
+            let result = c.invoke(arg_refs);
+            crate::meta::varcall_return_checked(result, r_return, r_error);
+            Ok(())
+        });
     }
 
     pub unsafe extern "C" fn rust_callable_call_fn<F>(
@@ -405,10 +418,19 @@ mod custom_callable {
     {
         let arg_refs: &[&Variant] = Variant::borrow_ref_slice(p_args, p_argument_count as usize);
 
-        let w: &mut FnWrapper<F> = CallableUserdata::inner_from_raw(callable_userdata);
+        let name = {
+            let w: &FnWrapper<F> = CallableUserdata::inner_from_raw(callable_userdata);
+            w.name.to_string()
+        };
+        let ctx = CallContext::custom_callable(name.as_str());
 
-        let result = (w.rust_function)(arg_refs);
-        crate::meta::varcall_return_checked(result, r_return, r_error);
+        crate::private::handle_varcall_panic(&ctx, &mut *r_error, move || {
+            // Get the FnWrapper again inside closure so the FnMut doesn't have to be UnwindSafe.
+            let w: &mut FnWrapper<F> = CallableUserdata::inner_from_raw(callable_userdata);
+            let result = (w.rust_function)(arg_refs);
+            crate::meta::varcall_return_checked(result, r_return, r_error);
+            Ok(())
+        });
     }
 
     pub unsafe extern "C" fn rust_callable_destroy<T>(callable_userdata: *mut std::ffi::c_void) {

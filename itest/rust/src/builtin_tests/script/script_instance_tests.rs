@@ -7,9 +7,9 @@
 
 use std::ffi::c_void;
 
-use godot::builtin::{GString, StringName, Variant, VariantType};
+use godot::builtin::{Array, Dictionary, GString, StringName, Variant, VariantType};
 use godot::classes::{IScriptExtension, Object, Script, ScriptExtension, ScriptLanguage};
-use godot::global::MethodFlags;
+use godot::global::{Error, MethodFlags};
 use godot::meta::{ClassName, FromGodot, MethodInfo, PropertyInfo, ToGodot};
 use godot::obj::script::{create_script_instance, ScriptInstance, SiMut};
 use godot::obj::{Base, Gd, WithBaseField};
@@ -17,11 +17,12 @@ use godot::register::{godot_api, GodotClass};
 use godot::sys;
 
 #[derive(GodotClass)]
-#[class(base = ScriptExtension, init)]
+#[class(base = ScriptExtension, init, tool)]
 struct TestScript {
     base: Base<ScriptExtension>,
 }
 
+#[rustfmt::skip]
 #[godot_api]
 impl IScriptExtension for TestScript {
     fn can_instantiate(&self) -> bool {
@@ -31,6 +32,38 @@ impl IScriptExtension for TestScript {
     unsafe fn instance_create(&self, for_object: Gd<Object>) -> *mut c_void {
         create_script_instance(TestScriptInstance::new(self.to_gd().upcast()), for_object)
     }
+
+    fn editor_can_reload_from_file(&mut self) -> bool { unreachable!() }
+    fn get_base_script(&self) -> Option<Gd<Script>> { unreachable!() }
+    fn get_global_name(&self) -> StringName { unreachable!() }
+    fn inherits_script(&self, _script: Gd<Script>) -> bool { unreachable!() }
+    fn get_instance_base_type(&self) -> StringName { unreachable!() }
+    unsafe fn placeholder_instance_create(&self, _for_object: Gd<Object>) -> *mut c_void { unreachable!() }
+    fn instance_has(&self, _object: Gd<Object>) -> bool { unreachable!() }
+    fn has_source_code(&self) -> bool { unreachable!() }
+    fn get_source_code(&self) -> GString { unreachable!() }
+    fn set_source_code(&mut self, _code: GString) { unreachable!() }
+    fn reload(&mut self, _keep_state: bool) -> Error { unreachable!() }
+    fn get_documentation(&self) -> Array<Dictionary> { unreachable!() }
+    fn has_method(&self, _method: StringName) -> bool { unreachable!() }
+    #[cfg(since_api = "4.2")]
+    fn has_static_method(&self, _method: StringName) -> bool { unreachable!() }
+    fn get_method_info(&self, _method: StringName) -> Dictionary { unreachable!() }
+    fn is_tool(&self) -> bool { unreachable!() }
+    fn is_valid(&self) -> bool { unreachable!() }
+    fn get_language(&self) -> Option<Gd<ScriptLanguage>> { unreachable!() }
+    fn has_script_signal(&self, _signall: StringName) -> bool { unreachable!() }
+    fn get_script_signal_list(&self) -> Array<Dictionary> { unreachable!() }
+    fn has_property_default_value(&self, _property: StringName) -> bool { unreachable!() }
+    fn get_property_default_value(&self, _property: StringName) -> Variant { unreachable!() }
+    fn update_exports(&mut self) { unreachable!() }
+    fn get_script_method_list(&self) -> Array<Dictionary> { unreachable!() }
+    fn get_script_property_list(&self) -> Array<Dictionary> { unreachable!() }
+    fn get_member_line(&self, _member: StringName) -> i32 { unreachable!() }
+    fn get_constants(&self) -> godot::prelude::Dictionary { unreachable!() }
+    fn get_members(&self) -> godot::prelude::Array<StringName> { unreachable!() }
+    fn is_placeholder_fallback_enabled(&self) -> bool { unreachable!() }
+    fn get_rpc_config(&self) -> Variant { unreachable!() }
 }
 
 struct TestScriptInstance {
@@ -51,7 +84,7 @@ impl TestScriptInstance {
             method_list: vec![MethodInfo {
                 id: 1,
                 method_name: StringName::from("script_method_a"),
-                class_name: ClassName::from_ascii_cstr("TestScript\0".as_bytes()),
+                class_name: ClassName::new_cached::<TestScript>(|| "TestScript".to_string()),
                 return_type: PropertyInfo::new_var::<GString>(""),
                 arguments: vec![
                     PropertyInfo::new_var::<GString>("arg_a"),
@@ -179,5 +212,10 @@ impl ScriptInstance for TestScriptInstance {
 
     fn property_set_fallback(_this: SiMut<Self>, _name: StringName, _value: &Variant) -> bool {
         false
+    }
+
+    #[cfg(since_api = "4.3")]
+    fn get_method_argument_count(&self, _method: StringName) -> Option<u32> {
+        None
     }
 }

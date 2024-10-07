@@ -13,6 +13,8 @@
 mod bench;
 mod class;
 mod derive;
+#[cfg(all(feature = "docs", since_api = "4.3"))]
+mod docs;
 mod gdextension;
 mod itest;
 mod util;
@@ -21,7 +23,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::util::ident;
+use crate::util::{bail, ident, KvParser};
 
 // Below intra-doc link to the trait only works as HTML, not as symbol link.
 /// Derive macro for [`GodotClass`](../obj/trait.GodotClass.html) on structs.
@@ -65,14 +67,14 @@ use crate::util::ident;
 /// ```
 ///
 /// The generated `init` function will initialize each struct field (except the field of type `Base<T>`, if any)
-/// using `Default::default()`. To assign some other value, annotate the field with `#[init(default = ...)]`:
+/// using `Default::default()`. To assign some other value, annotate the field with `#[init(val = ...)]`:
 ///
 /// ```
 /// # use godot_macros::GodotClass;
 /// #[derive(GodotClass)]
 /// #[class(init)]
 /// struct MyStruct {
-///     #[init(default = 42)]
+///     #[init(val = 42)]
 ///     my_field: i64
 /// }
 /// ```
@@ -89,7 +91,7 @@ use crate::util::ident;
 /// # #[derive(GodotClass)]
 /// # #[class(init)]
 /// # struct MyStruct {
-/// #[init(default = (HashMap::<i64, i64>::new()))]
+/// #[init(val = (HashMap::<i64, i64>::new()))]
 /// //                             ^ parentheses needed due to this comma
 /// my_field: HashMap<i64, i64>,
 /// # }
@@ -174,7 +176,7 @@ use crate::util::ident;
 /// ```
 /// # use godot::prelude::*;
 /// #[derive(GodotClass)]
-/// # #[class(init)]
+/// #[class(init)]
 /// struct MyStruct {
 ///     #[var(get = get_my_field, set = set_my_field)]
 ///     my_field: i64,
@@ -374,7 +376,7 @@ use crate::util::ident;
 ///
 /// ## Class renaming
 ///
-/// You may want to have structs with the same name. With Rust, this is allowed using `mod`. However in GDScript,
+/// You may want to have structs with the same name. With Rust, this is allowed using `mod`. However, in GDScript
 /// there are no modules, namespaces, or any such disambiguation.  Therefore, you need to change the names before they
 /// can get to Godot. You can use the `rename` key while defining your `GodotClass` for this.
 ///
@@ -398,12 +400,12 @@ use crate::util::ident;
 ///
 /// ## Class hiding
 ///
-/// If you want to register a class with Godot, but not have it show up in the editor then you can use `#[class(hidden)]`.
+/// If you want to register a class with Godot, but not have it show up in the editor then you can use `#[class(internal)]`.
 ///
 /// ```
 /// # use godot::prelude::*;
 /// #[derive(GodotClass)]
-/// #[class(base=Node, init, hidden)]
+/// #[class(base=Node, init, internal)]
 /// pub struct Foo {}
 /// ```
 ///
@@ -443,6 +445,35 @@ use crate::util::ident;
 /// # impl godot::classes::INode for MyStruct {
 /// #     fn init(base: godot::obj::Base<Self::Base>) -> Self { todo!() }
 /// # }
+/// ```
+///
+/// <div class="stab portability">Available on <strong>crate feature <code>register-docs</code></strong> only.</div>
+/// <div class="stab portability">Available on <strong>Godot version <code>4.3+</code></strong> only.</div>
+///
+/// # Documentation
+///
+/// You can document your functions, classes, members, and signals with the `///` doc comment syntax.
+///
+/// ```no_run
+/// # use godot::prelude::*;
+/// #[derive(GodotClass)]
+/// # #[class(init)]
+/// /// This is an example struct for documentation, inside documentation.
+/// struct DocumentedStruct {
+///     /// This is a class member.
+///     /// You can use markdown formatting such as _italics_.
+///     #[var]
+///     item: f32,
+/// }
+///
+/// #[godot_api]
+/// impl DocumentedStruct {
+///     /// This provides the item, after adding `0.2`.
+///     #[func]
+///     pub fn produce_item(&self) -> f32 {
+///         self.item + 0.2
+///     }
+/// }
 /// ```
 #[proc_macro_derive(GodotClass, attributes(class, base, hint, var, export, init, signal))]
 pub fn derive_godot_class(input: TokenStream) -> TokenStream {
@@ -513,7 +544,7 @@ pub fn derive_godot_class(input: TokenStream) -> TokenStream {
 ///
 /// ## Generated `init`
 ///
-/// This initializes the `Base<T>` field, and every other field with either `Default::default()` or the value specified in `#[init(default = ...)]`.
+/// This initializes the `Base<T>` field, and every other field with either `Default::default()` or the value specified in `#[init(val = ...)]`.
 ///
 /// ```no_run
 /// # use godot::prelude::*;
@@ -522,7 +553,7 @@ pub fn derive_godot_class(input: TokenStream) -> TokenStream {
 /// pub struct MyNode {
 ///     base: Base<Node>,
 ///
-///     #[init(default = 42)]
+///     #[init(val = 42)]
 ///     some_integer: i64,
 /// }
 /// ```
@@ -696,7 +727,7 @@ pub fn godot_api(_meta: TokenStream, input: TokenStream) -> TokenStream {
 /// assert_eq!(obj.to_godot(), GString::from("hello!"));
 /// ```
 ///
-/// However it will not work for structs with more than one field, even if that field is zero sized:
+/// However, it will not work for structs with more than one field, even if that field is zero sized:
 /// ```compile_fail
 /// use godot::prelude::*;
 ///
@@ -809,7 +840,7 @@ pub fn itest(meta: TokenStream, input: TokenStream) -> TokenStream {
     translate_meta("itest", meta, input, itest::attribute_itest)
 }
 
-/// Similar to `#[test]`, but runs an benchmark with Godot.
+/// Similar to `#[test]`, but runs a benchmark with Godot.
 ///
 /// Calls the `fn` many times and gathers statistics from its execution time.
 #[proc_macro_attribute]
@@ -871,4 +902,42 @@ where
         .unwrap_or_else(|e| e.to_compile_error());
 
     TokenStream::from(result2)
+}
+
+/// Returns the index of the key in `keys` (if any) that is present.
+fn handle_mutually_exclusive_keys(
+    parser: &mut KvParser,
+    attribute: &str,
+    keys: &[&str],
+) -> ParseResult<Option<usize>> {
+    let (oks, errs) = keys
+        .iter()
+        .enumerate()
+        .map(|(idx, key)| Ok(parser.handle_alone(key)?.then_some(idx)))
+        .partition::<Vec<_>, _>(|result: &ParseResult<Option<usize>>| result.is_ok());
+
+    if !errs.is_empty() {
+        return bail!(parser.span(), "{errs:?}");
+    }
+
+    let found_idxs = oks
+        .into_iter()
+        .filter_map(|r| r.unwrap()) // `partition` guarantees that this is `Ok`
+        .collect::<Vec<_>>();
+
+    match found_idxs.len() {
+        0 => Ok(None),
+        1 => Ok(Some(found_idxs[0])),
+        _ => {
+            let offending_keys = keys
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| found_idxs.contains(idx));
+
+            bail!(
+                parser.span(),
+                "{attribute} attribute keys {offending_keys:?} are mutually exclusive"
+            )
+        }
+    }
 }

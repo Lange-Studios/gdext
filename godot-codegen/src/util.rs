@@ -5,11 +5,13 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+// Note: some code duplication with godot-macros crate.
+
 use crate::models::domain::ClassCodegenLevel;
 use crate::models::json::JsonClass;
 use crate::special_cases;
 
-use proc_macro2::{Ident, Literal, TokenStream};
+use proc_macro2::{Ident, Literal, Punct, Spacing, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -23,25 +25,25 @@ pub fn make_imports() -> TokenStream {
     quote! {
         use godot_ffi as sys;
         use crate::builtin::*;
-        use crate::meta::{ClassName, PtrcallSignatureTuple, VarcallSignatureTuple};
+        use crate::meta::{ClassName, PtrcallSignatureTuple, RefArg, VarcallSignatureTuple};
         use crate::classes::native::*;
         use crate::classes::Object;
-        use crate::obj::Gd;
+        use crate::obj::{Gd, AsObjectArg};
+        use crate::obj::object_arg::{ObjectArg, ObjectCow};
         use crate::sys::GodotFfi as _;
     }
 }
 
+pub fn c_str(string: &str) -> Literal {
+    let c_string = std::ffi::CString::new(string).expect("CString::new() failed");
+    Literal::c_string(&c_string)
+}
+
 #[cfg(since_api = "4.2")]
 pub fn make_string_name(identifier: &str) -> TokenStream {
-    let lit = Literal::byte_string(format!("{identifier}\0").as_bytes());
-    quote! {
-        // TODO: C-string literals cannot currently be constructed in proc-macros, see the tracking issue:
-        // https://github.com/rust-lang/rust/issues/119750
-        {
-            #[allow(deprecated)]
-            StringName::from_latin1_with_nul(#lit)
-        }
-    }
+    let lit = c_str(identifier);
+
+    quote! { StringName::from(#lit) }
 }
 
 #[cfg(before_api = "4.2")]
@@ -84,10 +86,14 @@ pub fn ident(s: &str) -> Ident {
     format_ident!("{}", s)
 }
 
-pub fn cstr_u8_slice(string: &str) -> Literal {
-    Literal::byte_string(format!("{string}\0").as_bytes())
+pub fn lifetime(s: &str) -> TokenStream {
+    let tk_apostrophe = TokenTree::Punct(Punct::new('\'', Spacing::Joint));
+    let tk_lifetime = TokenTree::Ident(ident(s));
+
+    TokenStream::from_iter([tk_apostrophe, tk_lifetime])
 }
 
+// This function is duplicated in godot-macros\src\util\mod.rs
 #[rustfmt::skip]
 pub fn safe_ident(s: &str) -> Ident {
     // See also: https://doc.rust-lang.org/reference/keywords.html

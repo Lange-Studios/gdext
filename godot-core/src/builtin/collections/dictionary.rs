@@ -9,9 +9,6 @@ use godot_ffi as sys;
 
 use crate::builtin::{inner, Variant, VariantArray};
 use crate::meta::{FromGodot, ToGodot};
-use crate::registry::property::{
-    builtin_type_string, Export, PropertyHintInfo, TypeStringHint, Var,
-};
 use sys::types::OpaqueDictionary;
 use sys::{ffi_methods, interface_fn, GodotFfi};
 
@@ -73,6 +70,10 @@ use std::{fmt, ptr};
 /// # Thread safety
 ///
 /// The same principles apply as for [`VariantArray`]. Consult its documentation for details.
+///
+/// # Godot docs
+///
+/// [`Dictionary` (stable)](https://docs.godotengine.org/en/stable/classes/class_dictionary.html)
 pub struct Dictionary {
     opaque: OpaqueDictionary,
 }
@@ -133,7 +134,7 @@ impl Dictionary {
     ///
     /// _Godot equivalent: `dict.get(key, null)`_
     pub fn get_or_nil<K: ToGodot>(&self, key: K) -> Variant {
-        self.as_inner().get(key.to_variant(), Variant::nil())
+        self.as_inner().get(&key.to_variant(), &Variant::nil())
     }
 
     /// Returns `true` if the dictionary contains the given key.
@@ -142,14 +143,14 @@ impl Dictionary {
     #[doc(alias = "has")]
     pub fn contains_key<K: ToGodot>(&self, key: K) -> bool {
         let key = key.to_variant();
-        self.as_inner().has(key)
+        self.as_inner().has(&key)
     }
 
     /// Returns `true` if the dictionary contains all the given keys.
     ///
     /// _Godot equivalent: `has_all`_
     #[doc(alias = "has_all")]
-    pub fn contains_all_keys(&self, keys: VariantArray) -> bool {
+    pub fn contains_all_keys(&self, keys: &VariantArray) -> bool {
         self.as_inner().has_all(keys)
     }
 
@@ -176,7 +177,7 @@ impl Dictionary {
     /// _Godot equivalent: `find_key`_
     #[doc(alias = "find_key")]
     pub fn find_key_by_value<V: ToGodot>(&self, value: V) -> Option<Variant> {
-        let key = self.as_inner().find_key(value.to_variant());
+        let key = self.as_inner().find_key(&value.to_variant());
 
         if !key.is_nil() || self.contains_key(key.clone()) {
             Some(key)
@@ -223,7 +224,7 @@ impl Dictionary {
     pub fn remove<K: ToGodot>(&mut self, key: K) -> Option<Variant> {
         let key = key.to_variant();
         let old_value = self.get(key.clone());
-        self.as_inner().erase(key);
+        self.as_inner().erase(&key);
         old_value
     }
 
@@ -255,7 +256,7 @@ impl Dictionary {
     ///
     /// _Godot equivalent: `merge`_
     #[doc(alias = "merge")]
-    pub fn extend_dictionary(&mut self, other: Self, overwrite: bool) {
+    pub fn extend_dictionary(&mut self, other: &Self, overwrite: bool) {
         self.as_inner().merge(other, overwrite)
     }
 
@@ -333,7 +334,7 @@ impl Dictionary {
 
 // SAFETY:
 // - `move_return_ptr`
-//   Nothing special needs to be done beyond a `std::mem::swap` when returning an Dictionary.
+//   Nothing special needs to be done beyond a `std::mem::swap` when returning a Dictionary.
 //   So we can just use `ffi_methods`.
 //
 // - `from_arg_ptr`
@@ -395,28 +396,6 @@ impl Clone for Dictionary {
                 ctor(self_ptr, args.as_ptr());
             })
         }
-    }
-}
-
-impl Var for Dictionary {
-    fn get_property(&self) -> Self::Via {
-        self.to_godot()
-    }
-
-    fn set_property(&mut self, value: Self::Via) {
-        *self = FromGodot::from_godot(value)
-    }
-}
-
-impl TypeStringHint for Dictionary {
-    fn type_string() -> String {
-        builtin_type_string::<Dictionary>()
-    }
-}
-
-impl Export for Dictionary {
-    fn default_export_info() -> PropertyHintInfo {
-        PropertyHintInfo::with_hint_none("Dictionary")
     }
 }
 
@@ -502,7 +481,7 @@ impl<'a> DictionaryIter<'a> {
             return None;
         }
 
-        let value = self.dictionary.as_inner().get(key.clone(), Variant::nil());
+        let value = self.dictionary.as_inner().get(&key, &Variant::nil());
         Some((key, value))
     }
 
@@ -627,7 +606,7 @@ impl<'a> Keys<'a> {
         TypedKeys::from_untyped(self)
     }
 
-    /// Returns an array of the keys
+    /// Returns an array of the keys.
     pub fn array(self) -> VariantArray {
         // Can only be called
         assert!(self.iter.is_first);

@@ -1,8 +1,8 @@
 [package]
 name = "godot"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.80"
 license = "MPL-2.0"
 keywords = ["gamedev", "godot", "engine", "2d", "3d"] # possibly: "ffi"
 categories = ["game-engines", "graphics"]
@@ -10,7 +10,8 @@ description = "Rust bindings for Godot 4"
 authors = ["Bromeon", "godot-rust contributors"]
 repository = "https://github.com/godot-rust/gdext"
 homepage = "https://godot-rust.github.io"
-documentation = "https://docs.rs/godot/0.1.1"
+documentation = "https://docs.rs/godot/0.1.3"
+readme = "crate-readme.md"
 
 [features]
 custom-godot = ["api-custom"]
@@ -18,18 +19,16 @@ double-precision = ["godot-core/double-precision"]
 experimental-godot-api = ["godot-core/experimental-godot-api"]
 experimental-threads = ["godot-core/experimental-threads"]
 experimental-wasm = []
+experimental-wasm-nothreads = ["godot-core/experimental-wasm-nothreads"]
 codegen-rustfmt = ["godot-core/codegen-rustfmt"]
 lazy-function-tables = ["godot-core/codegen-lazy-fptrs"]
 serde = ["godot-core/serde"]
 
+register-docs = ["godot-macros/docs", "godot-core/docs"]
+
 api-custom = ["godot-core/api-custom"]
 # [version-sync] [[
 #  [line] api-$kebabVersion = ["godot-core/api-$kebabVersion"]
-api-4-0 = ["godot-core/api-4-0"]
-api-4-0-1 = ["godot-core/api-4-0-1"]
-api-4-0-2 = ["godot-core/api-4-0-2"]
-api-4-0-3 = ["godot-core/api-4-0-3"]
-api-4-0-4 = ["godot-core/api-4-0-4"]
 api-4-1 = ["godot-core/api-4-1"]
 api-4-1-1 = ["godot-core/api-4-1-1"]
 api-4-1-2 = ["godot-core/api-4-1-2"]
@@ -38,18 +37,19 @@ api-4-1-4 = ["godot-core/api-4-1-4"]
 api-4-2 = ["godot-core/api-4-2"]
 api-4-2-1 = ["godot-core/api-4-2-1"]
 api-4-2-2 = ["godot-core/api-4-2-2"]
+api-4-3 = ["godot-core/api-4-3"]
 # ]]
 
 default = ["__codegen-full"]
 
 # Private features, they are under no stability guarantee
-__codegen-full = ["godot-core/codegen-full"]
+__codegen-full = ["godot-core/codegen-full", "godot-macros/codegen-full"]
 __debug-log = ["godot-core/debug-log"]
 __trace = ["godot-core/trace"]
 
 [dependencies]
-godot-core = { path = "../godot-core", version = "=0.1.1" }
-godot-macros = { path = "../godot-macros", version = "=0.1.1" }
+godot-core = { path = "../godot-core", version = "=0.1.3" }
+godot-macros = { path = "../godot-macros", version = "=0.1.3" }
 
 # https://docs.rs/about/metadata
 [package.metadata.docs.rs]

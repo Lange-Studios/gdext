@@ -42,7 +42,10 @@ pub fn transform_trait_impl(original_impl: venial::Impl) -> ParseResult<TokenStr
     let mut virtual_method_names = vec![];
 
     let prv = quote! { ::godot::private };
-
+    #[cfg(all(feature = "docs", since_api = "4.3"))]
+    let docs = crate::docs::make_virtual_impl_docs(&original_impl.body_items);
+    #[cfg(not(all(feature = "docs", since_api = "4.3")))]
+    let docs = quote! {};
     for item in original_impl.body_items.iter() {
         let method = if let venial::ImplMember::AssocFunction(f) = item {
             f
@@ -217,7 +220,7 @@ pub fn transform_trait_impl(original_impl: venial::Impl) -> ParseResult<TokenStr
                     compile_error!("`get_property_list` is only supported for Godot versions of at least 4.3");
                 };
 
-                // Set these variables otherwise rust complains that these variables arent changed in Godot < 4.3.
+                // Set these variables otherwise rust complains that these variables aren't changed in Godot < 4.3.
                 get_property_list_fn = None;
                 free_property_list_fn = None;
             }
@@ -400,6 +403,7 @@ pub fn transform_trait_impl(original_impl: venial::Impl) -> ParseResult<TokenStr
                 user_property_get_revert_fn: #property_get_revert_fn,
                 user_property_can_revert_fn: #property_can_revert_fn,
                 get_virtual_fn: #prv::callbacks::get_virtual::<#class_name>,
+                #docs
             },
             init_level: <#class_name as ::godot::obj::GodotClass>::INIT_LEVEL,
         });

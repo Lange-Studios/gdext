@@ -23,11 +23,12 @@
 
 #![allow(clippy::match_like_matches_macro)] // if there is only one rule
 
-use crate::models::domain::TyName;
+use crate::conv::to_enum_type_uncached;
+use crate::models::domain::{Enum, RustTy, TyName};
 use crate::models::json::{JsonBuiltinMethod, JsonClassMethod, JsonUtilityFunction};
 use crate::special_cases::codegen_special_cases;
 use crate::Context;
-
+use proc_macro2::Ident;
 // Deliberately private -- all checks must go through `special_cases`.
 
 #[rustfmt::skip]
@@ -51,12 +52,6 @@ pub fn is_class_method_deleted(class_name: &TyName, method: &JsonClassMethod, ct
         | ("GDExtension", "initialize_library")
         | ("GDExtension", "close_library")
 
-        // Thread APIs
-        | ("ResourceLoader", "load_threaded_get")
-        | ("ResourceLoader", "load_threaded_get_status")
-        | ("ResourceLoader", "load_threaded_request")
-        // also: enum ThreadLoadStatus
-
         // TODO: Godot exposed methods that are unavailable, bug reported in https://github.com/godotengine/godot/issues/90303.
         | ("OpenXRHand", "set_hand_skeleton")
         | ("OpenXRHand", "get_hand_skeleton")
@@ -66,8 +61,16 @@ pub fn is_class_method_deleted(class_name: &TyName, method: &JsonClassMethod, ct
         | ("VisualShaderNodeComment", "get_title")
         | ("VisualShaderNodeComment", "set_description")
         | ("VisualShaderNodeComment", "get_description")
+        => true,
 
-        => true, _ => false
+        // Thread APIs
+        #[cfg(not(feature = "experimental-threads"))]
+        | ("ResourceLoader", "load_threaded_get")
+        | ("ResourceLoader", "load_threaded_get_status")
+        | ("ResourceLoader", "load_threaded_request") => true,
+        // also: enum ThreadLoadStatus
+
+        _ => false
     }
 }
 
@@ -86,26 +89,18 @@ pub fn is_godot_type_deleted(godot_ty: &str) -> bool {
 
     // OpenXR has not been available for macOS before 4.2.
     // See e.g. https://github.com/GodotVR/godot-xr-tools/issues/479.
-    // OpenXR is also not available on iOS: https://github.com/godotengine/godot/blob/13ba673c42951fd7cfa6fd8a7f25ede7e9ad92bb/modules/openxr/config.py#L2
+    // OpenXR is also not available on iOS and Web: https://github.com/godotengine/godot/blob/13ba673c42951fd7cfa6fd8a7f25ede7e9ad92bb/modules/openxr/config.py#L2
     // Do not hardcode a list of OpenXR classes, as more may be added in future Godot versions; instead use prefix.
     if godot_ty.starts_with("OpenXR") {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS");
         match target_os.as_deref() {
-            Ok("ios") => return true,
+            Ok("ios") | Ok("emscripten") => return true,
             Ok("macos") => {
                 #[cfg(before_api = "4.2")]
                 return true;
             }
             _ => {}
         }
-    }
-
-    // ThemeDB was previously loaded lazily
-    // in 4.2 it loads at the Scene level
-    // see: https://github.com/godotengine/godot/pull/81305
-    #[cfg(before_api = "4.2")]
-    if godot_ty == "ThemeDB" {
-        return true;
     }
 
     match godot_ty {
@@ -135,9 +130,14 @@ pub fn is_godot_type_deleted(godot_ty: &str) -> bool {
         | "MovieWriterMJPEG"
         | "MovieWriterPNGWAV"
         | "ResourceFormatImporterSaver"
+        => true,
+        // Previously loaded lazily; in 4.2 it loads at the Scene level. See: https://github.com/godotengine/godot/pull/81305
+        | "ThemeDB"
+        => cfg!(before_api = "4.2"),
+        // reintroduced in 4.3. See: https://github.com/godotengine/godot/pull/80214
         | "UniformSetCacheRD"
-
-        => true, _ => false
+        => cfg!(before_api = "4.3"),
+        _ => false
     }
 }
 
@@ -146,16 +146,24 @@ pub fn is_class_experimental(godot_class_name: &str) -> bool {
     // Note: parameter can be a class or builtin name, but also something like "enum::AESContext.Mode".
 
     // These classes are currently hardcoded, but the information is available in Godot's doc/classes directory.
-    // The XML file contains a property <class name="NavigationMesh" ... is_experimental="true">.
+    // The XML file contains a property <class name="NavigationMesh" ... experimental="">.
 
+    // Last update: 2024-09-15; Godot rev 6681f2563b99e14929a8acb27f4908fece398ef1.
     match godot_class_name {
+        | "AudioSample"
+        | "AudioSamplePlayback"
+        | "Compositor"
+        | "CompositorEffect"
         | "GraphEdit"
+        | "GraphElement"
+        | "GraphFrame"
         | "GraphNode"
         | "NavigationAgent2D"
         | "NavigationAgent3D"
         | "NavigationLink2D"
         | "NavigationLink3D"
         | "NavigationMesh"
+        | "NavigationMeshSourceGeometryData2D"
         | "NavigationMeshSourceGeometryData3D"
         | "NavigationObstacle2D"
         | "NavigationObstacle3D"
@@ -168,6 +176,7 @@ pub fn is_class_experimental(godot_class_name: &str) -> bool {
         | "NavigationRegion3D"
         | "NavigationServer2D"
         | "NavigationServer3D"
+        | "Parallax2D"
         | "SkeletonModification2D"
         | "SkeletonModification2DCCDIK"
         | "SkeletonModification2DFABRIK"
@@ -178,8 +187,11 @@ pub fn is_class_experimental(godot_class_name: &str) -> bool {
         | "SkeletonModification2DTwoBoneIK"
         | "SkeletonModificationStack2D"
         | "StreamPeerGZIP"
-        | "TextureRect"
-        
+        | "XRBodyModifier3D"
+        | "XRBodyTracker"
+        | "XRFaceModifier3D"
+        | "XRFaceTracker"
+
         => true, _ => false
     }
 }
@@ -270,6 +282,44 @@ pub fn is_class_method_const(class_name: &TyName, godot_method: &JsonClassMethod
     }
 }
 
+/// Currently only for virtual methods; checks if the specified parameter is required (non-null) and can be declared as `Gd<T>`
+/// instead of `Option<Gd<T>>`.
+pub fn is_class_method_param_required(
+    class_name: &TyName,
+    method_name: &str,
+    param: &Ident, // Don't use `&str` to avoid to_string() allocations for each check on call-site.
+) -> bool {
+    // Note: magically, it's enough if a base class method is declared here; it will be picked up by derived classes.
+
+    match (class_name.godot_ty.as_str(), method_name) {
+        // Nodes.
+        ("Node", "input") => true,
+        ("Node", "shortcut_input") => true,
+        ("Node", "unhandled_input") => true,
+        ("Node", "unhandled_key_input") => true,
+
+        // https://docs.godotengine.org/en/stable/classes/class_collisionobject2d.html#class-collisionobject2d-private-method-input-event
+        ("CollisionObject2D", "input_event") => true, // both parameters.
+
+        // UI.
+        ("Control", "gui_input") => true,
+
+        // Script instances.
+        ("ScriptExtension", "instance_create") => param == "for_object",
+        ("ScriptExtension", "placeholder_instance_create") => param == "for_object",
+        ("ScriptExtension", "inherits_script") => param == "script",
+        ("ScriptExtension", "instance_has") => param == "object",
+
+        // Editor.
+        ("EditorExportPlugin", "customize_resource") => param == "resource",
+        ("EditorExportPlugin", "customize_scene") => param == "scene",
+
+        ("EditorPlugin", "handles") => param == "object",
+
+        _ => false,
+    }
+}
+
 /// True if builtin method is excluded. Does NOT check for type exclusion; use [`is_builtin_type_deleted`] for that.
 pub fn is_builtin_method_deleted(_class_name: &TyName, method: &JsonBuiltinMethod) -> bool {
     // Currently only deleted if codegen.
@@ -336,6 +386,191 @@ pub fn get_interface_extra_docs(trait_name: &str) -> Option<&'static str> {
         }
 
         _ => None,
+    }
+}
+
+#[cfg(before_api = "4.4")]
+pub fn is_virtual_method_required(class_name: &str, method: &str) -> bool {
+    match (class_name, method) {
+        ("ScriptLanguageExtension", _) => method != "get_doc_comment_delimiters",
+
+        ("ScriptExtension", "editor_can_reload_from_file")
+        | ("ScriptExtension", "can_instantiate")
+        | ("ScriptExtension", "get_base_script")
+        | ("ScriptExtension", "get_global_name")
+        | ("ScriptExtension", "inherits_script")
+        | ("ScriptExtension", "get_instance_base_type")
+        | ("ScriptExtension", "instance_create")
+        | ("ScriptExtension", "placeholder_instance_create")
+        | ("ScriptExtension", "instance_has")
+        | ("ScriptExtension", "has_source_code")
+        | ("ScriptExtension", "get_source_code")
+        | ("ScriptExtension", "set_source_code")
+        | ("ScriptExtension", "reload")
+        | ("ScriptExtension", "get_documentation")
+        | ("ScriptExtension", "has_method")
+        | ("ScriptExtension", "has_static_method")
+        | ("ScriptExtension", "get_method_info")
+        | ("ScriptExtension", "is_tool")
+        | ("ScriptExtension", "is_valid")
+        | ("ScriptExtension", "get_language")
+        | ("ScriptExtension", "has_script_signal")
+        | ("ScriptExtension", "get_script_signal_list")
+        | ("ScriptExtension", "has_property_default_value")
+        | ("ScriptExtension", "get_property_default_value")
+        | ("ScriptExtension", "update_exports")
+        | ("ScriptExtension", "get_script_method_list")
+        | ("ScriptExtension", "get_script_property_list")
+        | ("ScriptExtension", "get_member_line")
+        | ("ScriptExtension", "get_constants")
+        | ("ScriptExtension", "get_members")
+        | ("ScriptExtension", "is_placeholder_fallback_enabled")
+        | ("ScriptExtension", "get_rpc_config")
+        | ("EditorExportPlugin", "customize_resource")
+        | ("EditorExportPlugin", "customize_scene")
+        | ("EditorExportPlugin", "get_customization_configuration_hash")
+        | ("EditorExportPlugin", "get_name")
+        | ("EditorVcsInterface", _)
+        | ("MovieWriter", _)
+        | ("TextServerExtension", "has_feature")
+        | ("TextServerExtension", "get_name")
+        | ("TextServerExtension", "get_features")
+        | ("TextServerExtension", "free_rid")
+        | ("TextServerExtension", "has")
+        | ("TextServerExtension", "create_font")
+        | ("TextServerExtension", "font_set_fixed_size")
+        | ("TextServerExtension", "font_get_fixed_size")
+        | ("TextServerExtension", "font_set_fixed_size_scale_mode")
+        | ("TextServerExtension", "font_get_fixed_size_scale_mode")
+        | ("TextServerExtension", "font_get_size_cache_list")
+        | ("TextServerExtension", "font_clear_size_cache")
+        | ("TextServerExtension", "font_remove_size_cache")
+        | ("TextServerExtension", "font_set_ascent")
+        | ("TextServerExtension", "font_get_ascent")
+        | ("TextServerExtension", "font_set_descent")
+        | ("TextServerExtension", "font_get_descent")
+        | ("TextServerExtension", "font_set_underline_position")
+        | ("TextServerExtension", "font_get_underline_position")
+        | ("TextServerExtension", "font_set_underline_thickness")
+        | ("TextServerExtension", "font_get_underline_thickness")
+        | ("TextServerExtension", "font_set_scale")
+        | ("TextServerExtension", "font_get_scale")
+        | ("TextServerExtension", "font_get_texture_count")
+        | ("TextServerExtension", "font_clear_textures")
+        | ("TextServerExtension", "font_remove_texture")
+        | ("TextServerExtension", "font_set_texture_image")
+        | ("TextServerExtension", "font_get_texture_image")
+        | ("TextServerExtension", "font_get_glyph_list")
+        | ("TextServerExtension", "font_clear_glyphs")
+        | ("TextServerExtension", "font_remove_glyph")
+        | ("TextServerExtension", "font_get_glyph_advance")
+        | ("TextServerExtension", "font_set_glyph_advance")
+        | ("TextServerExtension", "font_get_glyph_offset")
+        | ("TextServerExtension", "font_set_glyph_offset")
+        | ("TextServerExtension", "font_get_glyph_size")
+        | ("TextServerExtension", "font_set_glyph_size")
+        | ("TextServerExtension", "font_get_glyph_uv_rect")
+        | ("TextServerExtension", "font_set_glyph_uv_rect")
+        | ("TextServerExtension", "font_get_glyph_texture_idx")
+        | ("TextServerExtension", "font_set_glyph_texture_idx")
+        | ("TextServerExtension", "font_get_glyph_texture_rid")
+        | ("TextServerExtension", "font_get_glyph_texture_size")
+        | ("TextServerExtension", "font_get_glyph_index")
+        | ("TextServerExtension", "font_get_char_from_glyph_index")
+        | ("TextServerExtension", "font_has_char")
+        | ("TextServerExtension", "font_get_supported_chars")
+        | ("TextServerExtension", "font_draw_glyph")
+        | ("TextServerExtension", "font_draw_glyph_outline")
+        | ("TextServerExtension", "create_shaped_text")
+        | ("TextServerExtension", "shaped_text_clear")
+        | ("TextServerExtension", "shaped_text_add_string")
+        | ("TextServerExtension", "shaped_text_add_object")
+        | ("TextServerExtension", "shaped_text_resize_object")
+        | ("TextServerExtension", "shaped_get_span_count")
+        | ("TextServerExtension", "shaped_get_span_meta")
+        | ("TextServerExtension", "shaped_set_span_update_font")
+        | ("TextServerExtension", "shaped_text_substr")
+        | ("TextServerExtension", "shaped_text_get_parent")
+        | ("TextServerExtension", "shaped_text_shape")
+        | ("TextServerExtension", "shaped_text_is_ready")
+        | ("TextServerExtension", "shaped_text_get_glyphs")
+        | ("TextServerExtension", "shaped_text_sort_logical")
+        | ("TextServerExtension", "shaped_text_get_glyph_count")
+        | ("TextServerExtension", "shaped_text_get_range")
+        | ("TextServerExtension", "shaped_text_get_trim_pos")
+        | ("TextServerExtension", "shaped_text_get_ellipsis_pos")
+        | ("TextServerExtension", "shaped_text_get_ellipsis_glyphs")
+        | ("TextServerExtension", "shaped_text_get_ellipsis_glyph_count")
+        | ("TextServerExtension", "shaped_text_get_objects")
+        | ("TextServerExtension", "shaped_text_get_object_rect")
+        | ("TextServerExtension", "shaped_text_get_object_range")
+        | ("TextServerExtension", "shaped_text_get_object_glyph")
+        | ("TextServerExtension", "shaped_text_get_size")
+        | ("TextServerExtension", "shaped_text_get_ascent")
+        | ("TextServerExtension", "shaped_text_get_descent")
+        | ("TextServerExtension", "shaped_text_get_width")
+        | ("TextServerExtension", "shaped_text_get_underline_position")
+        | ("TextServerExtension", "shaped_text_get_underline_thickness")
+        | ("AudioStreamPlayback", "mix")
+        | ("AudioStreamPlaybackResampled", "mix_resampled")
+        | ("AudioStreamPlaybackResampled", "get_stream_sampling_rate")
+        | ("AudioEffectInstance", "process")
+        | ("AudioEffect", "instantiate")
+        | ("PhysicsDirectBodyState2DExtension", _)
+        | ("PhysicsDirectBodyState3DExtension", _)
+        | ("PhysicsDirectSpaceState2DExtension", _)
+        | ("PhysicsDirectSpaceState3DExtension", _)
+        | ("PhysicsServer3DExtension", _)
+        | ("PhysicsServer2DExtension", _)
+        | ("EditorScript", "run")
+        | ("VideoStreamPlayback", "update")
+        | ("EditorFileSystemImportFormatSupportQuery", _)
+        | ("Mesh", _)
+        | ("Texture2D", "get_width")
+        | ("Texture2D", "get_height")
+        | ("Texture3D", _)
+        | ("TextureLayered", _)
+        | ("StyleBox", "draw")
+        | ("Material", "get_shader_rid")
+        | ("Material", "get_shader_mode")
+        | ("PacketPeerExtension", "get_available_packet_count")
+        | ("PacketPeerExtension", "get_max_packet_size")
+        | ("StreamPeerExtension", "get_available_bytes")
+        | ("WebRtcDataChannelExtension", "poll")
+        | ("WebRtcDataChannelExtension", "close")
+        | ("WebRtcDataChannelExtension", "set_write_mode")
+        | ("WebRtcDataChannelExtension", "get_write_mode")
+        | ("WebRtcDataChannelExtension", "was_string_packet")
+        | ("WebRtcDataChannelExtension", "get_ready_state")
+        | ("WebRtcDataChannelExtension", "get_label")
+        | ("WebRtcDataChannelExtension", "is_ordered")
+        | ("WebRtcDataChannelExtension", "get_id")
+        | ("WebRtcDataChannelExtension", "get_max_packet_life_time")
+        | ("WebRtcDataChannelExtension", "get_max_retransmits")
+        | ("WebRtcDataChannelExtension", "get_protocol")
+        | ("WebRtcDataChannelExtension", "is_negotiated")
+        | ("WebRtcDataChannelExtension", "get_buffered_amount")
+        | ("WebRtcDataChannelExtension", "get_available_packet_count")
+        | ("WebRtcDataChannelExtension", "get_max_packet_size")
+        | ("WebRtcPeerConnectionExtension", _)
+        | ("MultiplayerPeerExtension", "get_available_packet_count")
+        | ("MultiplayerPeerExtension", "get_max_packet_size")
+        | ("MultiplayerPeerExtension", "set_transfer_channel")
+        | ("MultiplayerPeerExtension", "get_transfer_channel")
+        | ("MultiplayerPeerExtension", "set_transfer_mode")
+        | ("MultiplayerPeerExtension", "get_transfer_mode")
+        | ("MultiplayerPeerExtension", "set_target_peer")
+        | ("MultiplayerPeerExtension", "get_packet_peer")
+        | ("MultiplayerPeerExtension", "get_packet_mode")
+        | ("MultiplayerPeerExtension", "get_packet_channel")
+        | ("MultiplayerPeerExtension", "is_server")
+        | ("MultiplayerPeerExtension", "poll")
+        | ("MultiplayerPeerExtension", "close")
+        | ("MultiplayerPeerExtension", "disconnect_peer")
+        | ("MultiplayerPeerExtension", "get_unique_id")
+        | ("MultiplayerPeerExtension", "get_connection_status") => true,
+
+        (_, _) => false,
     }
 }
 
@@ -406,4 +641,34 @@ pub fn is_enum_exhaustive(class_name: Option<&TyName>, enum_name: &str) -> bool 
 
         => true, _ => false
     }
+}
+
+/// Whether an enum can be combined with another enum (return value) for bitmasking purposes.
+///
+/// If multiple masks are ever necessary, this can be extended to return a slice instead of Option.
+///
+/// If a mapping is found, returns the corresponding `RustTy`.
+pub fn as_enum_bitmaskable(enum_: &Enum) -> Option<RustTy> {
+    let class_name = enum_.surrounding_class.as_ref();
+    let class_name_str = class_name.map(|ty| ty.godot_ty.as_str());
+    let enum_name = enum_.godot_name.as_str();
+
+    let mapped = match (class_name_str, enum_name) {
+        (None, "Key") => "KeyModifierMask",
+        (None, "MouseButton") => "MouseButtonMask",
+
+        // For class enums:
+        // (Some("ThisClass"), "Enum") => "SomeClass.MaskedEnum"
+        _ => return None,
+    };
+
+    // Exhaustive enums map to Rust `enum`, which cannot hold other values.
+    // Code flow: this is as_enum_bitmaskable() is still called even if is_enum_exhaustive() previously returned true.
+    assert!(
+        !is_enum_exhaustive(class_name, enum_name),
+        "Enum {enum_name} with bitmask mapping cannot be exhaustive"
+    );
+
+    let rust_ty = to_enum_type_uncached(mapped, true);
+    Some(rust_ty)
 }

@@ -105,7 +105,9 @@ fn make_native_structure(
         }
 
         impl ToGodot for *mut #class_name {
-            fn to_godot(&self) -> Self::Via {
+            type ToVia<'v> = i64;
+
+            fn to_godot(&self) -> Self::ToVia<'_> {
                 *self as i64
             }
         }
@@ -121,7 +123,9 @@ fn make_native_structure(
         }
 
         impl ToGodot for *const #class_name {
-            fn to_godot(&self) -> Self::Via {
+            type ToVia<'v> = i64;
+
+            fn to_godot(&self) -> Self::ToVia<'_> {
                 *self as i64
             }
         }
@@ -263,7 +267,7 @@ pub(crate) fn parse_native_structures_format(input: &str) -> Option<Vec<NativeSt
             }
 
             // If the field is an array, store array size separately.
-            // Not part of type because fixed-size arrays are not a concept in the JSON outside of native structures.
+            // Not part of type because fixed-size arrays are not a concept in the JSON outside native structures.
             let mut array_size = None;
             if let Some(index) = field_name.find('[') {
                 array_size = Some(field_name[index + 1..field_name.len() - 1].parse().ok()?);

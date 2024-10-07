@@ -5,7 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-// Note: some code duplication with codegen crate
+// Note: some code duplication with godot-codegen crate.
 
 use crate::ParseResult;
 use proc_macro2::{Delimiter, Group, Ident, Literal, TokenStream, TokenTree};
@@ -22,23 +22,14 @@ pub fn ident(s: &str) -> Ident {
     format_ident!("{}", s)
 }
 
-pub fn cstr_u8_slice(string: &str) -> Literal {
-    Literal::byte_string(format!("{string}\0").as_bytes())
+pub fn c_str(string: &str) -> Literal {
+    let c_string = std::ffi::CString::new(string).expect("CString::new() failed");
+    Literal::c_string(&c_string)
 }
 
 pub fn class_name_obj(class: &impl ToTokens) -> TokenStream {
     let class = class.to_token_stream();
     quote! { <#class as ::godot::obj::GodotClass>::class_name() }
-}
-
-pub fn property_variant_type(property_type: &impl ToTokens) -> TokenStream {
-    let property_type = property_type.to_token_stream();
-    quote! { <<#property_type as ::godot::meta::GodotConvert>::Via as ::godot::meta::GodotType>::Ffi::variant_type() }
-}
-
-pub fn property_variant_class_name(property_type: &impl ToTokens) -> TokenStream {
-    let property_type = property_type.to_token_stream();
-    quote! { <<#property_type as ::godot::meta::GodotConvert>::Via as ::godot::meta::GodotType>::class_name() }
 }
 
 pub fn bail_fn<R, T>(msg: impl AsRef<str>, tokens: T) -> ParseResult<R>
@@ -272,4 +263,28 @@ pub fn make_virtual_tool_check() -> TokenStream {
 #[cfg(since_api = "4.3")]
 pub fn make_virtual_tool_check() -> TokenStream {
     TokenStream::new()
+}
+
+// This function is duplicated in godot-codegen\src\util.rs
+#[rustfmt::skip]
+pub fn safe_ident(s: &str) -> Ident {
+    // See also: https://doc.rust-lang.org/reference/keywords.html
+    match s {
+        // Lexer
+        | "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern" | "false" | "fn" | "for" | "if"
+        | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
+        | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where" | "while"
+
+        // Lexer 2018+
+        | "async" | "await" | "dyn"
+
+        // Reserved
+        | "abstract" | "become" | "box" | "do" | "final" | "macro" | "override" | "priv" | "typeof" | "unsized" | "virtual" | "yield"
+
+        // Reserved 2018+
+        | "try"
+           => format_ident!("{}_", s),
+
+         _ => ident(s)
+    }
 }

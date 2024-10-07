@@ -5,8 +5,12 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use crate::builtin::NodePath;
+use crate::classes::Node;
 use crate::meta::GodotConvert;
-use crate::registry::property::{PropertyHintInfo, Var};
+use crate::obj::{Gd, GodotClass, Inherits};
+use crate::registry::property::Var;
+use std::fmt::{self, Debug, Formatter};
 use std::mem;
 
 /// Ergonomic late-initialization container with `ready()` support.
@@ -17,9 +21,10 @@ use std::mem;
 ///
 /// `OnReady<T>` should always be used as a field. There are two modes to use it:
 ///
-/// 1. **Automatic mode, using [`new()`](Self::new).**<br>
-///    Before `ready()` is called, all `OnReady` fields constructed with `new()` are automatically initialized, in the order of
-///    declaration. This means that you can safely access them in `ready()`.<br><br>
+/// 1. **Automatic mode, using [`new()`](OnReady::new), [`from_base_fn()`](OnReady::from_base_fn) or
+///    [`node()`](OnReady::<Gd<T>>::node).**<br>
+///    Before `ready()` is called, all `OnReady` fields constructed with the above methods are automatically initialized,
+///    in the order of declaration. This means that you can safely access them in `ready()`.<br><br>
 /// 2. **Manual mode, using [`manual()`](Self::manual).**<br>
 ///    These fields are left uninitialized until you call [`init()`][Self::init] on them. This is useful if you need more complex
 ///    initialization scenarios than a closure allows. If you forget initialization, a panic will occur on first access.
@@ -31,26 +36,32 @@ use std::mem;
 /// `OnReady<T>` cannot be used with `#[export]` fields, because `ready()` is typically not called in the editor (unless `#[class(tool)]`
 /// is specified). You can however use it with `#[var]` -- just make sure to access the fields in GDScript after `ready()`.
 ///
-/// This type is not thread-safe. `ready()` runs on the main thread and you are expected to access its value on the main thread, as well.
+/// This type is not thread-safe. `ready()` runs on the main thread, and you are expected to access its value on the main thread, as well.
 ///
 /// [option]: std::option::Option
 /// [lazy]: https://docs.rs/once_cell/1/once_cell/unsync/struct.Lazy.html
 ///
-/// # Example
+/// # Requirements
+/// - The class must have an explicit `Base` field (i.e. `base: Base<Node>`).
+/// - The class must inherit `Node` (otherwise `ready()` would not exist anyway).
+///
+/// # Example - user-defined `init`
 /// ```
 /// use godot::prelude::*;
 ///
 /// #[derive(GodotClass)]
 /// #[class(base = Node)]
 /// struct MyClass {
+///    base: Base<Node>,
 ///    auto: OnReady<i32>,
 ///    manual: OnReady<i32>,
 /// }
 ///
 /// #[godot_api]
 /// impl INode for MyClass {
-///     fn init(_base: Base<Node>) -> Self {
+///     fn init(base: Base<Node>) -> Self {
 ///        Self {
+///            base,
 ///            auto: OnReady::new(|| 11),
 ///            manual: OnReady::manual(),
 ///        }
@@ -65,8 +76,53 @@ use std::mem;
 ///        assert_eq!(*self.manual, 22);
 ///     }
 /// }
+/// ```
+///
+/// # Example - macro-generated `init`
+/// ```
+/// use godot::prelude::*;
+///
+/// #[derive(GodotClass)]
+/// #[class(init, base = Node)]
+/// struct MyClass {
+///    base: Base<Node>,
+///    #[init(node = "ChildPath")]
+///    auto: OnReady<Gd<Node2D>>,
+///    #[init(val = OnReady::manual())]
+///    manual: OnReady<i32>,
+/// }
+///
+/// #[godot_api]
+/// impl INode for MyClass {
+///     fn ready(&mut self) {
+///        // self.node is now ready with the node found at path `ChildPath`.
+///        assert_eq!(self.auto.get_name(), "ChildPath".into());
+///
+///        // self.manual needs to be initialized manually.
+///        self.manual.init(22);
+///        assert_eq!(*self.manual, 22);
+///     }
+/// }
+/// ```
+#[derive(Debug)]
 pub struct OnReady<T> {
     state: InitState<T>,
+}
+
+impl<T: GodotClass + Inherits<Node>> OnReady<Gd<T>> {
+    /// Variant of [`OnReady::new()`], fetching the node located at `path` before `ready()`.
+    ///
+    /// This is the functional equivalent of the GDScript pattern `@onready var node = $NodePath`.
+    ///
+    /// # Panics
+    /// - If `path` does not point to a valid node.
+    ///
+    /// Note that the panic will only happen if and when the node enters the SceneTree for the first time
+    ///  (i.e.: it receives the `READY` notification).
+    pub fn node(path: impl Into<NodePath>) -> Self {
+        let path = path.into();
+        Self::from_base_fn(|base| base.get_node_as(path))
+    }
 }
 
 impl<T> OnReady<T> {
@@ -82,6 +138,14 @@ impl<T> OnReady<T> {
     pub fn new<F>(init_fn: F) -> Self
     where
         F: FnOnce() -> T + 'static,
+    {
+        Self::from_base_fn(|_| init_fn())
+    }
+
+    /// Variant of [`OnReady::new()`], allowing access to `Base` when initializing.
+    pub fn from_base_fn<F>(init_fn: F) -> Self
+    where
+        F: FnOnce(&Gd<Node>) -> T + 'static,
     {
         Self {
             state: InitState::AutoPrepared {
@@ -126,7 +190,7 @@ impl<T> OnReady<T> {
     ///
     /// # Panics
     /// If the value is already initialized.
-    pub(crate) fn init_auto(&mut self) {
+    pub(crate) fn init_auto(&mut self, base: &Gd<Node>) {
         // Two branches needed, because mem::replace() could accidentally overwrite an already initialized value.
         match &self.state {
             InitState::ManualUninitialized => return, // skipped
@@ -147,7 +211,7 @@ impl<T> OnReady<T> {
         };
 
         self.state = InitState::Initialized {
-            value: initializer(),
+            value: initializer(base),
         };
     }
 }
@@ -205,18 +269,32 @@ impl<T: Var> Var for OnReady<T> {
         let deref: &mut T = self;
         deref.set_property(value);
     }
-
-    fn property_hint() -> PropertyHintInfo {
-        T::property_hint()
-    }
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Implementation
 
+type InitFn<T> = dyn FnOnce(&Gd<Node>) -> T;
+
 enum InitState<T> {
     ManualUninitialized,
-    AutoPrepared { initializer: Box<dyn FnOnce() -> T> },
+    AutoPrepared { initializer: Box<InitFn<T>> },
     AutoInitializing, // needed because state cannot be empty
     Initialized { value: T },
+}
+
+impl<T: Debug> Debug for InitState<T> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            InitState::ManualUninitialized => fmt.debug_struct("ManualUninitialized").finish(),
+            InitState::AutoPrepared { .. } => {
+                fmt.debug_struct("AutoPrepared").finish_non_exhaustive()
+            }
+            InitState::AutoInitializing => fmt.debug_struct("AutoInitializing").finish(),
+            InitState::Initialized { value } => fmt
+                .debug_struct("Initialized")
+                .field("value", value)
+                .finish(),
+        }
+    }
 }

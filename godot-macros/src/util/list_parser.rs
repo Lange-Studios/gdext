@@ -22,7 +22,7 @@ pub struct ListParser {
 }
 
 impl ListParser {
-    /// Create a new list parser from a `key = (elem1, elem2, ..)` attribute.
+    /// Create a new list parser from a `key = (elem1, elem2, ...)` attribute.
     ///
     /// The value is optional, and an attribute without a value will be treated as having an empty list.
     pub(crate) fn new_from_kv(
@@ -195,6 +195,36 @@ impl ListParser {
         match self.try_next_ident() {
             Ok(opt) => Ok(opt.map(|k| (k, None))),
             Err(err) => bail!(err.span(), "expected `key [= value]`"),
+        }
+    }
+
+    /// Like `next_key_optional_value`, but checks if input flags and keys are in the allowed sets and `Err`s if not.
+    ///
+    /// If an allowed flag appears as a key or an allowed key as a flag, that will also `Err` with a helpful message.
+    pub(crate) fn next_allowed_key_optional_value(
+        &mut self,
+        allowed_flag_keys: &[&str],
+        allowed_kv_keys: &[&str],
+    ) -> ParseResult<Option<(Ident, Option<KvValue>)>> {
+        let allowed_keys = || {
+            let allowed_flag_keys = allowed_flag_keys.join(",");
+            let allowed_kv_keys = allowed_kv_keys.join(",");
+            [allowed_flag_keys, allowed_kv_keys].join(",")
+        };
+        match self.next_key_optional_value()? {
+            Some((key, None)) if !allowed_flag_keys.contains(&key.to_string().as_str()) => {
+                if allowed_kv_keys.contains(&key.to_string().as_str()) {
+                    return bail!(key, "`{key}` requires a value `{key} = VALUE`");
+                }
+                bail!(key, "expected one of \"{}\"", allowed_keys())
+            }
+            Some((key, Some(_))) if !allowed_kv_keys.contains(&key.to_string().as_str()) => {
+                if allowed_flag_keys.contains(&key.to_string().as_str()) {
+                    return bail!(key, "key `{key}` mustn't have a value");
+                }
+                bail!(key, "expected one of \"{}\"", allowed_keys())
+            }
+            key_maybe_value => Ok(key_maybe_value),
         }
     }
 

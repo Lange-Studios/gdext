@@ -12,17 +12,41 @@ use godot_ffi as sys;
 use sys::{ffi_methods, GodotFfi};
 
 use crate::builtin::math::{GlamConv, GlamType};
-use crate::builtin::{inner, real, RVec3, Vector3, Vector3Axis};
+use crate::builtin::{inner, real, RVec3, Vector2i, Vector3, Vector3Axis};
 
 /// Vector used for 3D math using integer coordinates.
 ///
-/// 3-element structure that can be used to represent positions in 3D space or any other triple of
-/// numeric values.
+/// 3-element structure that can be used to represent discrete positions or directions in 3D space,
+/// as well as any other triple of numeric values.
 ///
-/// It uses integer coordinates and is therefore preferable to [`Vector3`] when exact precision is
-/// required. Note that the values are limited to 32 bits, and unlike [`Vector3`] this cannot be
+/// `Vector3i` uses integer coordinates and is therefore preferable to [`Vector3`] when exact precision is
+/// required. Note that the values are limited to 32 bits, and unlike `Vector3` this cannot be
 /// configured with an engine build option. Use `i64` or [`PackedInt64Array`][crate::builtin::PackedInt64Array]
 /// if 64-bit values are needed.
+///
+#[doc = shared_vector_docs!()]
+///
+/// ### Navigation to `impl` blocks within this page
+///
+/// - [Constants](#constants)
+/// - [Constructors and general vector functions](#constructors-and-general-vector-functions)
+/// - [Specialized `Vector3i` functions](#specialized-vector3i-functions)
+/// - [3D functions](#3d-functions)
+/// - [Trait impls + operators](#trait-implementations)
+///
+/// # All vector types
+///
+/// | Dimension | Floating-point                       | Integer                                |
+/// |-----------|--------------------------------------|----------------------------------------|
+/// | 2D        | [`Vector2`][crate::builtin::Vector2] | [`Vector2i`][crate::builtin::Vector2i] |
+/// | 3D        | [`Vector3`][crate::builtin::Vector3] | **`Vector3i`**                         |
+/// | 4D        | [`Vector4`][crate::builtin::Vector4] | [`Vector4i`][crate::builtin::Vector4i] |
+///
+/// <br>You can convert to 2D vectors using [`to_2d()`][Self::to_2d], and to `Vector3` using [`cast_float()`][Self::cast_float].
+///
+/// # Godot docs
+///
+/// [`Vector3i` (stable)](https://docs.godotengine.org/en/stable/classes/class_vector3i.html)
 #[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -37,25 +61,24 @@ pub struct Vector3i {
     pub z: i32,
 }
 
-impl_vector_operators!(Vector3i, i32, (x, y, z));
-
-impl_vector_consts!(Vector3i, i32);
-impl_integer_vector_consts!(Vector3i);
-impl_vector3x_consts!(Vector3i, i32);
+/// # Constants
+impl Vector3i {
+    impl_vector_consts!(i32);
+    impl_integer_vector_consts!();
+    impl_vector3x_consts!(i32);
+}
 
 impl_vector_fns!(Vector3i, glam::IVec3, i32, (x, y, z));
-impl_vector3x_fns!(Vector3i, i32);
 
+/// # Specialized `Vector3i` functions
 impl Vector3i {
-    /// Constructs a new `Vector3i` from a [`Vector3`]. The floating point coordinates will be truncated.
+    #[deprecated = "Moved to `Vector3::cast_int()`"]
     #[inline]
     pub const fn from_vector3(v: Vector3) -> Self {
-        Self {
-            x: v.x as i32,
-            y: v.y as i32,
-            z: v.z as i32,
-        }
+        v.cast_int()
     }
+
+    inline_impl_integer_vector_fns!(Vector3, x, y, z);
 
     /// Converts `self` to the corresponding [`real`] `glam` type.
     #[doc(hidden)]
@@ -70,6 +93,10 @@ impl Vector3i {
         inner::InnerVector3i::from_outer(self)
     }
 }
+
+impl_vector3x_fns!(Vector3i, Vector2i, i32);
+
+impl_vector_operators!(Vector3i, i32, (x, y, z));
 
 /// Formats the vector like Godot: `(x, y, z)`.
 impl fmt::Display for Vector3i {
@@ -125,6 +152,12 @@ mod test {
         let expected_json = "{\"x\":0,\"y\":0,\"z\":0}";
 
         crate::builtin::test_utils::roundtrip(&vector, expected_json);
+    }
+
+    #[test]
+    fn sign() {
+        let vector = Vector3i::new(2, -5, 0);
+        assert_eq!(vector.sign(), Vector3i::new(1, -1, 0));
     }
 
     #[test]

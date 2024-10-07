@@ -9,11 +9,12 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use crate::derive::data_models::{CStyleEnum, ConvertType, GodotConvert, NewtypeStruct, ViaType};
+use crate::derive::derive_godot_convert::EnumeratorExprCache;
 
 /// Creates a `ToGodot` impl for the given `GodotConvert`.
 ///
 /// There is no dedicated `ToGodot` derive macro currently, this is instead called by the `GodotConvert` derive macro.
-pub fn make_togodot(convert: &GodotConvert) -> TokenStream {
+pub fn make_togodot(convert: &GodotConvert, cache: &mut EnumeratorExprCache) -> TokenStream {
     let GodotConvert {
         ty_name: name,
         convert_type: data,
@@ -21,14 +22,16 @@ pub fn make_togodot(convert: &GodotConvert) -> TokenStream {
 
     match data {
         ConvertType::NewType { field } => make_togodot_for_newtype_struct(name, field),
+
         ConvertType::Enum {
             variants,
             via: ViaType::GString { .. },
         } => make_togodot_for_string_enum(name, variants),
+
         ConvertType::Enum {
             variants,
             via: ViaType::Int { int_ident },
-        } => make_togodot_for_int_enum(name, variants, int_ident),
+        } => make_togodot_for_int_enum(name, variants, int_ident, cache),
     }
 }
 
@@ -39,24 +42,33 @@ fn make_togodot_for_newtype_struct(name: &Ident, field: &NewtypeStruct) -> Token
 
     quote! {
         impl ::godot::meta::ToGodot for #name {
+            // For now by-value, may change.
+            type ToVia<'v> = #via_type;
+
             fn to_godot(&self) -> #via_type {
                 ::godot::meta::ToGodot::to_godot(&self.#field_name)
-            }
-
-            fn into_godot(self) -> #via_type {
-                ::godot::meta::ToGodot::into_godot(self.#field_name)
             }
         }
     }
 }
 
 /// Derives `ToGodot` for enums with a via type of integers.
-fn make_togodot_for_int_enum(name: &Ident, enum_: &CStyleEnum, int: &Ident) -> TokenStream {
-    let discriminants = enum_.discriminants();
-    let names = enum_.names();
+fn make_togodot_for_int_enum(
+    name: &Ident,
+    enum_: &CStyleEnum,
+    int: &Ident,
+
+    cache: &mut EnumeratorExprCache,
+) -> TokenStream {
+    let discriminants =
+        cache.map_ord_exprs(int, enum_.enumerator_names(), enum_.enumerator_ord_exprs());
+    let names = enum_.enumerator_names();
 
     quote! {
         impl ::godot::meta::ToGodot for #name {
+            type ToVia<'v> = #int;
+
+            #[allow(unused_parens)] // Error "unnecessary parentheses around block return value"; comes from ord expressions like (1 + 2).
             fn to_godot(&self) -> #int {
                 match self {
                     #(
@@ -70,11 +82,13 @@ fn make_togodot_for_int_enum(name: &Ident, enum_: &CStyleEnum, int: &Ident) -> T
 
 /// Derives `ToGodot` for enums with a via type of `GString`.
 fn make_togodot_for_string_enum(name: &Ident, enum_: &CStyleEnum) -> TokenStream {
-    let names = enum_.names();
+    let names = enum_.enumerator_names();
     let names_str = names.iter().map(ToString::to_string).collect::<Vec<_>>();
 
     quote! {
         impl ::godot::meta::ToGodot for #name {
+            type ToVia<'v> = ::godot::builtin::GString;
+
             fn to_godot(&self) -> ::godot::builtin::GString {
                 match self {
                     #(

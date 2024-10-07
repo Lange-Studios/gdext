@@ -8,7 +8,9 @@
 pub use crate::gen::classes::class_macros;
 pub use crate::obj::rtti::ObjectRtti;
 pub use crate::registry::callbacks;
-pub use crate::registry::plugin::{ClassPlugin, ErasedRegisterFn, PluginItem};
+pub use crate::registry::plugin::{
+    ClassPlugin, ErasedRegisterFn, ErasedRegisterRpcsFn, InherentImpl, PluginItem,
+};
 pub use crate::storage::{as_storage, Storage};
 pub use sys::out;
 
@@ -19,10 +21,8 @@ use crate::global::godot_error;
 use crate::meta::error::CallError;
 use crate::meta::CallContext;
 use crate::sys;
-use std::collections::HashMap;
 use std::sync::{atomic, Arc, Mutex};
 use sys::Global;
-
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Global variables
 
@@ -41,34 +41,63 @@ sys::plugin_registry!(pub __GODOT_PLUGIN_REGISTRY: ClassPlugin);
 
 // Note: if this leads to many allocated IDs that are not removed, we could limit to 1 per thread-ID.
 // Would need to check if re-entrant calls with multiple errors per thread are possible.
-#[derive(Default)]
 struct CallErrors {
-    map: HashMap<i32, CallError>,
-    next_id: i32,
+    ring_buffer: Vec<Option<CallError>>,
+    next_id: u8,
+    generation: u16,
+}
+
+impl Default for CallErrors {
+    fn default() -> Self {
+        Self {
+            ring_buffer: [const { None }; Self::MAX_ENTRIES as usize].into(),
+            next_id: 0,
+            generation: 0,
+        }
+    }
 }
 
 impl CallErrors {
+    const MAX_ENTRIES: u8 = 32;
+
     fn insert(&mut self, err: CallError) -> i32 {
         let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
 
-        self.map.insert(id, err);
-        id
+        self.next_id = self.next_id.wrapping_add(1) % Self::MAX_ENTRIES;
+        if self.next_id == 0 {
+            self.generation = self.generation.wrapping_add(1);
+        }
+
+        self.ring_buffer[id as usize] = Some(err);
+
+        (self.generation as i32) << 16 | id as i32
     }
 
     // Returns success or failure.
     fn remove(&mut self, id: i32) -> Option<CallError> {
-        self.map.remove(&id)
+        let generation = (id >> 16) as u16;
+        let id = id as u8;
+
+        // If id < next_id, the generation must be the current one -- otherwise the one before.
+        if id < self.next_id {
+            if generation != self.generation {
+                return None;
+            }
+        } else if generation != self.generation.wrapping_sub(1) {
+            return None;
+        }
+
+        // Returns Some if there's still an entry, None if it was already removed.
+        self.ring_buffer[id as usize].take()
     }
 }
 
-fn call_error_insert(err: CallError, out_error: &mut sys::GDExtensionCallError) {
+/// Inserts a `CallError` into a global variable and returns its ID to later remove it.
+fn call_error_insert(err: CallError) -> i32 {
     // Wraps around if entire i32 is depleted. If this happens in practice (unlikely, users need to deliberately ignore errors that are printed),
-    // we just overwrite oldest errors, should still work.
+    // we just overwrite the oldest errors, should still work.
     let id = CALL_ERRORS.lock().insert(err);
-
-    // Abuse field to store our ID.
-    out_error.argument = id;
+    id
 }
 
 pub(crate) fn call_error_remove(in_error: &sys::GDExtensionCallError) -> Option<CallError> {
@@ -89,10 +118,31 @@ pub(crate) fn call_error_remove(in_error: &sys::GDExtensionCallError) -> Option<
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
-// Plugin handling
+// Plugin and global state handling
+
+pub fn next_class_id() -> u16 {
+    static NEXT_CLASS_ID: atomic::AtomicU16 = atomic::AtomicU16::new(0);
+    NEXT_CLASS_ID.fetch_add(1, atomic::Ordering::Relaxed)
+}
 
 pub(crate) fn iterate_plugins(mut visitor: impl FnMut(&ClassPlugin)) {
     sys::plugin_foreach!(__GODOT_PLUGIN_REGISTRY; visitor);
+}
+
+#[cfg(feature = "codegen-full")] // Remove if used in other scenarios.
+pub(crate) fn find_inherent_impl(class_name: crate::meta::ClassName) -> Option<InherentImpl> {
+    // We do this manually instead of using `iterate_plugins()` because we want to break as soon as we find a match.
+    let plugins = __godot_rust_plugin___GODOT_PLUGIN_REGISTRY.lock().unwrap();
+
+    plugins.iter().find_map(|elem| {
+        if elem.class_name == class_name {
+            if let PluginItem::InherentImpl(inherent_impl) = &elem.item {
+                return Some(inherent_impl.clone());
+            }
+        }
+
+        None
+    })
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -114,8 +164,8 @@ pub struct ClassConfig {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Capability queries and internal access
 
-pub fn auto_init<T>(l: &mut crate::obj::OnReady<T>) {
-    l.init_auto();
+pub fn auto_init<T>(l: &mut crate::obj::OnReady<T>, base: &crate::obj::Gd<crate::classes::Node>) {
+    l.init_auto(base);
 }
 
 #[cfg(since_api = "4.3")]
@@ -167,6 +217,7 @@ pub fn is_class_runtime(is_tool: bool) -> bool {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Panic handling
 
+#[cfg(debug_assertions)]
 #[derive(Debug)]
 struct GodotPanicInfo {
     line: u32,
@@ -209,6 +260,9 @@ pub(crate) fn has_error_print_level(level: u8) -> bool {
 /// Executes `code`. If a panic is thrown, it is caught and an error message is printed to Godot.
 ///
 /// Returns `Err(message)` if a panic occurred, and `Ok(result)` with the result of `code` otherwise.
+///
+/// In contrast to [`handle_varcall_panic`] and [`handle_ptrcall_panic`], this function is not intended for use in `try_` functions,
+/// where the error is propagated as a `CallError` in a global variable.
 pub fn handle_panic<E, F, R, S>(error_context: E, code: F) -> Result<R, String>
 where
     E: FnOnce() -> S,
@@ -218,6 +272,8 @@ where
     handle_panic_with_print(error_context, code, has_error_print_level(1))
 }
 
+// TODO(bromeon): make call_ctx lazy-evaluated (like error_ctx) everywhere;
+// or make it eager everywhere and ensure it's cheaply constructed in the call sites.
 pub fn handle_varcall_panic<F, R>(
     call_ctx: &CallContext,
     out_err: &mut sys::GDExtensionCallError,
@@ -239,6 +295,36 @@ pub fn handle_varcall_panic<F, R>(
         Err(panic_msg) => CallError::failed_by_user_panic(call_ctx, panic_msg),
     };
 
+    let error_id = report_call_error(call_error, true);
+
+    // Abuse 'argument' field to store our ID.
+    *out_err = sys::GDExtensionCallError {
+        error: sys::GODOT_RUST_CUSTOM_CALL_ERROR,
+        argument: error_id,
+        expected: 0,
+    };
+
+    //sys::interface_fn!(variant_new_nil)(sys::AsUninit::as_uninit(ret));
+}
+
+pub fn handle_ptrcall_panic<F, R>(call_ctx: &CallContext, code: F)
+where
+    F: FnOnce() -> R + std::panic::UnwindSafe,
+{
+    let outcome: Result<R, String> = handle_panic_with_print(|| call_ctx, code, false);
+
+    let call_error = match outcome {
+        // All good.
+        Ok(_result) => return,
+
+        // Panic occurred (typically through user): forward message.
+        Err(panic_msg) => CallError::failed_by_user_panic(call_ctx, panic_msg),
+    };
+
+    let _id = report_call_error(call_error, false);
+}
+
+fn report_call_error(call_error: CallError, track_globally: bool) -> i32 {
     // Print failed calls to Godot's console.
     // TODO Level 1 is not yet set, so this will always print if level != 0. Needs better logic to recognize try_* calls and avoid printing.
     // But a bit tricky with multiple threads and re-entrancy; maybe pass in info in error struct.
@@ -246,10 +332,12 @@ pub fn handle_varcall_panic<F, R>(
         godot_error!("{call_error}");
     }
 
-    out_err.error = sys::GODOT_RUST_CUSTOM_CALL_ERROR;
-    call_error_insert(call_error, out_err);
-
-    //sys::interface_fn!(variant_new_nil)(sys::AsUninit::as_uninit(ret));
+    // Once there is a way to auto-remove added errors, this could be always true.
+    if track_globally {
+        call_error_insert(call_error)
+    } else {
+        0
+    }
 }
 
 fn handle_panic_with_print<E, F, R, S>(error_context: E, code: F, print: bool) -> Result<R, String>
@@ -258,12 +346,15 @@ where
     F: FnOnce() -> R + std::panic::UnwindSafe,
     S: std::fmt::Display,
 {
+    #[cfg(debug_assertions)]
     let info: Arc<Mutex<Option<GodotPanicInfo>>> = Arc::new(Mutex::new(None));
 
-    // Back up previous hook, set new one
-    let prev_hook = std::panic::take_hook();
-    {
+    // Back up previous hook, set new one.
+    #[cfg(debug_assertions)]
+    let prev_hook = {
         let info = info.clone();
+        let prev_hook = std::panic::take_hook();
+
         std::panic::set_hook(Box::new(move |panic_info| {
             if let Some(location) = panic_info.location() {
                 *info.lock().unwrap() = Some(GodotPanicInfo {
@@ -275,30 +366,38 @@ where
                 eprintln!("panic occurred, but can't get location information");
             }
         }));
-    }
 
-    // Run code that should panic, restore hook
+        prev_hook
+    };
+
+    // Run code that should panic, restore hook.
     let panic = std::panic::catch_unwind(code);
+
+    // Restore the previous panic hook if in Debug mode.
+    #[cfg(debug_assertions)]
     std::panic::set_hook(prev_hook);
 
     match panic {
         Ok(result) => Ok(result),
         Err(err) => {
             // Flush, to make sure previous Rust output (e.g. test announcement, or debug prints during app) have been printed
-            // TODO write custom panic handler and move this there, before panic backtrace printing
+            // TODO write custom panic handler and move this there, before panic backtrace printing.
             flush_stdout();
 
-            let guard = info.lock().unwrap();
-            let info = guard.as_ref().expect("no panic info available");
-
-            if print {
-                godot_error!(
-                    "Rust function panicked at {}:{}.\n  Context: {}",
-                    info.file,
-                    info.line,
-                    error_context()
-                );
-                //eprintln!("Backtrace:\n{}", info.backtrace);
+            // Handle panic info only in Debug mode.
+            #[cfg(debug_assertions)]
+            {
+                let guard = info.lock().unwrap();
+                let info = guard.as_ref().expect("no panic info available");
+                if print {
+                    godot_error!(
+                        "Rust function panicked at {}:{}.\n  Context: {}",
+                        info.file,
+                        info.line,
+                        error_context()
+                    );
+                    //eprintln!("Backtrace:\n{}", info.backtrace);
+                }
             }
 
             let msg = extract_panic_message(err);
@@ -310,5 +409,56 @@ where
 
             Err(msg)
         }
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::{CallError, CallErrors};
+    use crate::meta::CallContext;
+
+    fn make(index: usize) -> CallError {
+        let method_name = format!("method_{index}");
+        let ctx = CallContext::func("Class", &method_name);
+        CallError::failed_by_user_panic(&ctx, "some panic reason".to_string())
+    }
+
+    #[test]
+    fn test_call_errors() {
+        let mut store = CallErrors::default();
+
+        let mut id07 = 0;
+        let mut id13 = 0;
+        let mut id20 = 0;
+        for i in 0..24 {
+            let id = store.insert(make(i));
+            match i {
+                7 => id07 = id,
+                13 => id13 = id,
+                20 => id20 = id,
+                _ => {}
+            }
+        }
+
+        let e = store.remove(id20).expect("must be present");
+        assert_eq!(e.method_name(), "method_20");
+
+        let e = store.remove(id20);
+        assert!(e.is_none());
+
+        for i in 24..CallErrors::MAX_ENTRIES as usize {
+            store.insert(make(i));
+        }
+        for i in 0..10 {
+            store.insert(make(i));
+        }
+
+        let e = store.remove(id07);
+        assert!(e.is_none(), "generation overwritten");
+
+        let e = store.remove(id13).expect("generation not yet overwritten");
+        assert_eq!(e.method_name(), "method_13");
     }
 }

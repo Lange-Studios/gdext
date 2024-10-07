@@ -20,6 +20,10 @@ use sys::{ffi_methods, GodotFfi};
 /// values outside this range are explicitly allowed for e.g. High Dynamic Range (HDR).
 ///
 /// To access its [**HSVA**](ColorHsv) representation, use [`Color::to_hsv`].
+///
+/// # Godot docs
+///
+/// [`Color` (stable)](https://docs.godotengine.org/en/stable/classes/class_color.html)
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -299,7 +303,7 @@ impl Color {
     ///
     /// # Panics
     ///
-    /// Method will panic if the RGBA values are outside of the valid range `0.0..=1.0`. You can use [`Color::normalized`] to ensure that
+    /// Method will panic if the RGBA values are outside the valid range `0.0..=1.0`. You can use [`Color::normalized`] to ensure that
     /// they are in range, or use [`Color::try_to_hsv`].
     pub fn to_hsv(self) -> ColorHsv {
         self.try_to_hsv().unwrap_or_else(|e| panic!("{e}"))
@@ -315,7 +319,9 @@ impl Color {
         Ok(ColorHsv { h, s, v, a })
     }
 
-    /// Clamps all components to an usually valid range `0.0..=1.0`. Useful for transformations between different color representations.
+    /// Clamps all components to a usually valid range `0.0..=1.0`.
+    ///
+    /// Useful for transformations between different color representations.
     #[must_use]
     pub fn normalized(self) -> Self {
         Self {
@@ -373,19 +379,6 @@ pub enum ColorChannelOrder {
 
     /// ARGB channel order. More compatible with DirectX.
     ARGB,
-}
-
-#[allow(non_upper_case_globals)]
-#[doc(hidden)] // No longer advertise in API docs.
-impl ColorChannelOrder {
-    #[deprecated(note = "Renamed to `ColorChannelOrder::RGBA`.")]
-    pub const Rgba: Self = Self::RGBA;
-
-    #[deprecated(note = "Renamed to `ColorChannelOrder::ABGR`.")]
-    pub const Abgr: Self = Self::ABGR;
-
-    #[deprecated(note = "Renamed to `ColorChannelOrder::ARGB`.")]
-    pub const Argb: Self = Self::ARGB;
 }
 
 impl ColorChannelOrder {

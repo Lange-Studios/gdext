@@ -15,6 +15,13 @@
 pub mod builder;
 pub mod builtin;
 pub mod classes;
+#[cfg(all(since_api = "4.3", feature = "docs"))]
+pub mod docs;
+#[doc(hidden)]
+pub mod possibly_docs {
+    #[cfg(all(since_api = "4.3", feature = "docs"))]
+    pub use crate::docs::*;
+}
 pub mod global;
 pub mod init;
 pub mod meta;
@@ -26,6 +33,12 @@ mod storage;
 pub use godot_ffi as sys;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
+// Validations (see also godot/lib.rs)
+
+#[cfg(all(feature = "docs", before_api = "4.3"))]
+compile_error!("Generating editor docs for Rust symbols requires at least Godot 4.3.");
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
 // Generated code
 
 // Output of generated code. Mimics the file structure, symbols are re-exported.
@@ -35,6 +48,7 @@ pub use godot_ffi as sys;
 #[allow(clippy::let_unit_value)] // let args = ();
 #[allow(clippy::wrong_self_convention)] // to_string() is const
 #[allow(clippy::upper_case_acronyms)] // TODO remove this line once we transform names
+#[allow(clippy::needless_lifetimes)]  // the following explicit lifetimes could be elided: 'a
 #[allow(unreachable_code, clippy::unimplemented)] // TODO remove once #153 is implemented
 mod gen {
     include!(concat!(env!("OUT_DIR"), "/mod.rs"));
@@ -55,18 +69,3 @@ pub mod private;
 /// Re-export logging macro.
 #[doc(hidden)]
 pub use godot_ffi::out;
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-// Deprecated modules
-
-#[deprecated = "Module has been split into `godot::classes`, `godot::global` and `godot::tools`."]
-#[doc(hidden)] // No longer advertise in API docs.
-pub mod engine;
-
-#[deprecated = "Print macros have been moved to `godot::global`."]
-#[doc(hidden)] // No longer advertise in API docs.
-pub mod log {
-    pub use crate::global::{
-        godot_error, godot_print, godot_print_rich, godot_script_error, godot_warn,
-    };
-}

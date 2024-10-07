@@ -25,6 +25,21 @@ use std::ops::Mul;
 /// [ a.y  b.y  c.y  o.y ]
 /// [ a.z  b.z  c.z  o.z ]
 /// ```
+///
+/// # All matrix types
+///
+/// | Dimension | Orthogonal basis | Affine transform        | Projective transform |
+/// |-----------|------------------|-------------------------|----------------------|
+/// | 2D        |                  | [`Transform2D`] (2x3)   |                      |
+/// | 3D        | [`Basis`] (3x3)  | **`Transform3D`** (3x4) | [`Projection`] (4x4) |
+///
+/// [`Basis`]: Basis
+/// [`Transform2D`]: crate::builtin::Transform2D
+/// [`Projection`]: Projection
+///
+/// # Godot docs
+///
+/// [`Transform3D` (stable)](https://docs.godotengine.org/en/stable/classes/class_transform3d.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -78,8 +93,7 @@ impl Transform3D {
         }
     }
 
-    /// Constructs a Transform3d from a Projection by trimming the last row of
-    /// the projection matrix.
+    /// Constructs a `Transform3D` from a `Projection` by trimming the last row of the projection matrix.
     ///
     /// _Godot equivalent: `Transform3D(Projection from)`_
     pub fn from_projection(proj: &Projection) -> Self {
@@ -146,20 +160,6 @@ impl Transform3D {
         self.basis.is_finite() && self.origin.is_finite()
     }
 
-    /// Returns a copy of the transform rotated such that the forward axis (-Z)
-    /// points towards the `target` position.
-    ///
-    /// See [`Basis::new_looking_at()`] for more information.
-    #[cfg(before_api = "4.1")]
-    #[must_use]
-    pub fn looking_at(&self, target: Vector3, up: Vector3) -> Self {
-        Self {
-            basis: Basis::new_looking_at(target - self.origin, up),
-            origin: self.origin,
-        }
-    }
-
-    #[cfg(since_api = "4.1")]
     #[must_use]
     pub fn looking_at(&self, target: Vector3, up: Vector3, use_model_front: bool) -> Self {
         Self {

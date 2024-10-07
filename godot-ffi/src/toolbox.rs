@@ -53,12 +53,16 @@ macro_rules! out {
 
 /// Trace output.
 #[cfg(not(feature = "debug-log"))]
-// TODO find a better way than sink-writing to avoid warnings, #[allow(unused_variables)] doesn't work
 #[macro_export]
 macro_rules! out {
     ()                          => ({});
-    ($fmt:literal)              => ({ use std::io::{sink, Write}; let _ = write!(sink(), $fmt); });
-    ($fmt:literal, $($arg:tt)*) => ({ use std::io::{sink, Write}; let _ = write!(sink(), $fmt, $($arg)*); };)
+    ($fmt:literal)              => ({});
+    ($fmt:literal, $($arg:tt)*) => {{
+        // Discard; should not generate any code.
+        if false {
+            format_args!($fmt, $($arg)*);
+        }
+    }}
 }
 
 /// Extract a function pointer from its `Option` and convert it to the (dereferenced) target type.
@@ -67,12 +71,19 @@ macro_rules! out {
 ///  let get_godot_version = get_proc_address(sys::c_str(b"get_godot_version\0"));
 ///  let get_godot_version = sys::cast_fn_ptr!(get_godot_version as sys::GDExtensionInterfaceGetGodotVersion);
 /// ```
+///
+/// # Safety
+///
+/// `$ToType` must be an option of an `unsafe extern "C"` function pointer.
 #[allow(unused)]
 #[macro_export]
-macro_rules! cast_fn_ptr {
+macro_rules! unsafe_cast_fn_ptr {
     ($option:ident as $ToType:ty) => {{
-        let ptr = $option.expect("null function pointer");
-        std::mem::transmute::<unsafe extern "C" fn(), <$ToType as $crate::Inner>::FnPtr>(ptr)
+        // SAFETY: `$ToType` is an `unsafe extern "C"` function pointer and is thus compatible with `unsafe extern "C" fn()`.
+        // And `Option<T>` is compatible with `Option<U>` when both `T` and `U` are compatible function pointers.
+        #[allow(unused_unsafe)]
+        let ptr: Option<_> = unsafe { std::mem::transmute::<Option<unsafe extern "C" fn()>, $ToType>($option) };
+        ptr.expect("null function pointer")
     }};
 }
 
@@ -135,16 +146,6 @@ pub fn hash_value<T: std::hash::Hash>(t: &T) -> u64 {
     hasher.finish()
 }
 
-/// Check whether contents of `lhs` and `rhs` are bitwise equal.
-///
-/// # Safety
-/// Requires valid pointers, properly aligned.
-pub unsafe fn bitwise_equal<T>(lhs: *const T, rhs: *const T) -> bool {
-    // Convert to raw parts
-    std::slice::from_raw_parts(lhs as *const u8, std::mem::size_of::<T>())
-        == std::slice::from_raw_parts(rhs as *const u8, std::mem::size_of::<T>())
-}
-
 pub fn join<T, I>(iter: I) -> String
 where
     T: std::fmt::Display,
@@ -190,7 +191,7 @@ pub fn unqualified_type_name<T>() -> &'static str {
 // Private helpers
 
 /// Metafunction to extract inner function pointer types from all the bindgen Option<F> type names.
-/// Needed for `cast_fn_ptr` macro.
+/// Needed for `unsafe_cast_fn_ptr` macro.
 pub(crate) trait Inner: Sized {
     type FnPtr: Sized;
 }
@@ -246,6 +247,9 @@ pub type UtilityFunctionBind = unsafe extern "C" fn(
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Utility functions
+
+// TODO: Most of these should be `unsafe` since the caller passes an `unsafe extern "C"` function pointer which it must be legal to call.
+// But for now we can just rely on knowing that these aren't called in the wrong context.
 
 pub(crate) fn load_class_method(
     get_method_bind: GetClassMethod,
@@ -359,8 +363,7 @@ mod manual_init_cell {
     /// Similar to a [`OnceLock`](std::sync::OnceLock), but without the overhead of locking for initialization. In most cases the compiler
     /// seems able to optimize `OnceLock` to equivalent code. But this guaranteed does not have any overhead at runtime.
     ///
-    /// This cell additionally allows to deinitialize the value, which is useful in scenarios where the state needs to be reset (e.g.
-    /// hot-reloading on Linux).
+    /// This cell additionally allows to deinitialize the value. Access to uninitialized values is UB, but checked in Debug mode.
     pub(crate) struct ManualInitCell<T> {
         // Invariant: Is `None` until initialized, and then never modified after (except, possibly, through interior mutability).
         cell: UnsafeCell<Option<T>>,
@@ -407,7 +410,7 @@ mod manual_init_cell {
         /// - Calls to this method must not happen concurrently with a call to any other method on this cell.
         #[inline]
         pub unsafe fn clear(&self) {
-            // SAFETY: `set` is only ever called once, and is not called concurrently with any other methods. Therefore we can take
+            // SAFETY: `set` is only ever called once, and is not called concurrently with any other methods. Therefore, we can take
             // a mutable reference to the contents of the cell.
             let option = unsafe { &mut *self.cell.get() };
 

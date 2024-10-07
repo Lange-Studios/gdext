@@ -16,9 +16,20 @@ use crate::builtin::{real, Rect2i, Side, Vector2};
 /// `Rect2` consists of a position, a size, and several utility functions. It is typically used for
 /// fast overlap tests.
 ///
-/// Currently most methods are only available through [`InnerRect2`](super::inner::InnerRect2).
+/// # All bounding-box types
 ///
-/// The 3D counterpart to `Rect2` is [`Aabb`](super::Aabb).
+/// | Dimension | Floating-point  | Integer      |
+/// |-----------|-----------------|--------------|
+/// | 2D        | **`Rect2`**     | [`Rect2i`]   |
+/// | 3D        | [`Aabb`]        |              |
+///
+/// <br>You can convert to `Rect2i` using [`cast_int()`][Self::cast_int].
+///
+/// [`Aabb`]: crate::builtin::Aabb
+///
+/// # Godot docs
+///
+/// [`Rect2` (stable)](https://docs.godotengine.org/en/stable/classes/class_rect2.html)
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)]
@@ -54,14 +65,20 @@ impl Rect2 {
         }
     }
 
-    /// Create a new `Rect2` from a `Rect2i`, using `as` for `i32` to `real` conversions.
-    ///
-    /// _Godot equivalent: `Rect2(Rect2i from)`_
+    #[deprecated = "Moved to `Rect2i::cast_float()`"]
     #[inline]
     pub const fn from_rect2i(rect: Rect2i) -> Self {
-        Self {
-            position: Vector2::from_vector2i(rect.position),
-            size: Vector2::from_vector2i(rect.size),
+        rect.cast_float()
+    }
+
+    /// Create a new `Rect2i` from a `Rect2`, using `as` for `real` to `i32` conversions.
+    ///
+    /// _Godot equivalent: `Rect2i(Rect2 from)`_
+    #[inline]
+    pub const fn cast_int(self) -> Rect2i {
+        Rect2i {
+            position: self.position.cast_int(),
+            size: self.size.cast_int(),
         }
     }
 

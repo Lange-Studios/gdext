@@ -43,7 +43,7 @@ impl<'a> StringCache<'a> {
         let mut sname = MaybeUninit::<sys::types::OpaqueStringName>::uninit();
         let sname_ptr = sname.as_mut_ptr();
 
-        // For Godot 4.0 and 4.1, construct StringName via String + conversion.
+        // For Godot 4.1, construct StringName via String + conversion.
         #[cfg(before_api = "4.2")]
         unsafe {
             let string_new_with_latin1_chars_and_len = self
@@ -129,30 +129,30 @@ fn box_to_sname_ptr(
 
 #[cfg(before_api = "4.2")]
 unsafe fn string_type_ptr(opaque_ptr: *mut sys::types::OpaqueString) -> sys::GDExtensionTypePtr {
-    ptr::addr_of_mut!(*opaque_ptr) as sys::GDExtensionTypePtr
+    opaque_ptr as sys::GDExtensionTypePtr
 }
 
 #[cfg(before_api = "4.2")]
 unsafe fn string_uninit_ptr(
     opaque_ptr: *mut sys::types::OpaqueString,
 ) -> sys::GDExtensionUninitializedStringPtr {
-    ptr::addr_of_mut!(*opaque_ptr) as sys::GDExtensionUninitializedStringPtr
+    opaque_ptr as sys::GDExtensionUninitializedStringPtr
 }
 
 #[cfg(since_api = "4.2")]
 unsafe fn sname_uninit_ptr(
     opaque_ptr: *mut sys::types::OpaqueStringName,
 ) -> sys::GDExtensionUninitializedStringNamePtr {
-    ptr::addr_of_mut!(*opaque_ptr) as sys::GDExtensionUninitializedStringNamePtr
+    opaque_ptr as sys::GDExtensionUninitializedStringNamePtr
 }
 
 unsafe fn sname_type_ptr(opaque_ptr: *mut sys::types::OpaqueStringName) -> sys::GDExtensionTypePtr {
-    ptr::addr_of_mut!(*opaque_ptr) as sys::GDExtensionTypePtr
+    opaque_ptr as sys::GDExtensionTypePtr
 }
 
 #[cfg(before_api = "4.2")]
 unsafe fn sname_uninit_type_ptr(
     opaque_ptr: *mut sys::types::OpaqueStringName,
 ) -> sys::GDExtensionUninitializedTypePtr {
-    ptr::addr_of_mut!(*opaque_ptr) as sys::GDExtensionUninitializedTypePtr
+    opaque_ptr as sys::GDExtensionUninitializedTypePtr
 }

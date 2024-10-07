@@ -15,13 +15,16 @@ use sys::{static_assert_eq_size_align, VariantType};
 use crate::builtin::{Callable, NodePath, StringName, Variant};
 use crate::global::PropertyHint;
 use crate::meta::error::{ConvertError, FromFfiError};
-use crate::meta::{ArrayElement, CallContext, FromGodot, GodotConvert, GodotType, ToGodot};
-use crate::obj::raw::RawGd;
+use crate::meta::{
+    ArrayElement, CallContext, ClassName, FromGodot, GodotConvert, GodotType, PropertyHintInfo,
+    RefArg, ToGodot,
+};
 use crate::obj::{
     bounds, cap, Bounds, EngineEnum, GdDerefTarget, GdMut, GdRef, GodotClass, Inherits, InstanceId,
+    RawGd,
 };
 use crate::private::callbacks;
-use crate::registry::property::{Export, PropertyHintInfo, TypeStringHint, Var};
+use crate::registry::property::{Export, Var};
 use crate::{classes, out};
 
 /// Smart pointer to objects owned by the Godot engine.
@@ -31,7 +34,8 @@ use crate::{classes, out};
 /// This smart pointer can only hold _objects_ in the Godot sense: instances of Godot classes (`Node`, `RefCounted`, etc.)
 /// or user-declared structs (declared with `#[derive(GodotClass)]`). It does **not** hold built-in types (`Vector3`, `Color`, `i32`).
 ///
-/// `Gd<T>` never holds null objects. If you need nullability, use `Option<Gd<T>>`.
+/// `Gd<T>` never holds null objects. If you need nullability, use `Option<Gd<T>>`. To pass null objects to engine APIs, you can
+/// additionally use [`Gd::null_arg()`] as a shorthand.
 ///
 /// # Memory management
 ///
@@ -83,6 +87,10 @@ use crate::{classes, out};
 /// When you declare a `#[func]` method on your own class, and it accepts `&self` or `&mut self`, an implicit `bind()` or `bind_mut()` call
 /// on the owning `Gd<T>` is performed. This is important to keep in mind, as you can get into situations that violate dynamic borrow rules; for
 /// example if you are inside a `&mut self` method, make a call to GDScript and indirectly call another method on the same object (re-entrancy).
+///
+/// # Conversions
+///
+/// For type conversions, please read the [`godot::meta` module docs][crate::meta].
 ///
 /// [book]: https://godot-rust.github.io/book/godot-api/objects.html
 /// [`Object`]: classes::Object
@@ -201,9 +209,12 @@ impl<T: GodotClass> Gd<T> {
 
     /// ⚠️ Looks up the given instance ID and returns the associated object.
     ///
+    /// Corresponds to Godot's global function `instance_from_id()`.
+    ///
     /// # Panics
     /// If no such instance ID is registered, or if the dynamic type of the object behind that instance ID
     /// is not compatible with `T`.
+    #[doc(alias = "instance_from_id")]
     pub fn from_instance_id(instance_id: InstanceId) -> Self {
         Self::try_from_instance_id(instance_id).unwrap_or_else(|err| {
             panic!(
@@ -369,9 +380,8 @@ impl<T: GodotClass> Gd<T> {
 
     /// **Downcast:** try to convert into a smart pointer to a derived class.
     ///
-    /// If `T`'s dynamic type is not `Derived` or one of its subclasses, `None` is returned
-    /// and the reference is dropped. Otherwise, `Some` is returned and the ownership is moved
-    /// to the returned value.
+    /// If `T`'s dynamic type is not `Derived` or one of its subclasses, `Err(self)` is returned, meaning you can reuse the original
+    /// object for further casts.
     pub fn try_cast<Derived>(self) -> Result<Gd<Derived>, Self>
     where
         Derived: GodotClass + Inherits<T>,
@@ -465,26 +475,7 @@ impl<T: GodotClass> Gd<T> {
     {
         self.raw.script_sys()
     }
-}
 
-impl<T: GodotClass> Deref for Gd<T> {
-    // Target is always an engine class:
-    // * if T is an engine class => T
-    // * if T is a user class => T::Base
-    type Target = GdDerefTarget<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.raw.as_target()
-    }
-}
-
-impl<T: GodotClass> DerefMut for Gd<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.raw.as_target_mut()
-    }
-}
-
-impl<T: GodotClass> Gd<T> {
     /// Runs `init_fn` on the address of a pointer (initialized to null). If that pointer is still null after the `init_fn` call,
     /// then `None` will be returned; otherwise `Gd::from_obj_sys(ptr)`.
     ///
@@ -576,7 +567,7 @@ where
         }
 
         // SAFETY: object must be alive, which was just checked above. No multithreading here.
-        // Also checked in the C free_instance_func callback, however error message can be more precise here and we don't need to instruct
+        // Also checked in the C free_instance_func callback, however error message can be more precise here, and we don't need to instruct
         // the engine about object destruction. Both paths are tested.
         let bound = unsafe { T::Declarer::is_currently_bound(&self.raw) };
         if bound {
@@ -634,22 +625,65 @@ where
     }
 }
 
+impl<T> Gd<T>
+where
+    T: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
+{
+    /// Represents `null` when passing an object argument to Godot.
+    ///
+    /// This expression is only intended for function argument lists. It can be used whenever a Godot signature accepts
+    /// [`AsObjectArg<T>`][crate::obj::AsObjectArg]. `Gd::null_arg()` as an argument is equivalent to `Option::<Gd<T>>::None`, but less wordy.
+    ///
+    /// To work with objects that can be null, use `Option<Gd<T>>` instead. For APIs that accept `Variant`, you can pass [`Variant::nil()`].
+    ///
+    /// # Nullability
+    /// <div class="warning">
+    /// The GDExtension API does not inform about nullability of its function parameters. It is up to you to verify that the arguments you pass
+    /// are only null when this is allowed. Doing this wrong should be safe, but can lead to the function call failing.
+    /// </div>
+    ///
+    /// # Example
+    /// ```no_run
+    /// # fn some_node() -> Gd<Node> { unimplemented!() }
+    /// use godot::prelude::*;
+    ///
+    /// let mut shape: Gd<Node> = some_node();
+    /// shape.set_owner(Gd::null_arg());
+    pub fn null_arg() -> crate::obj::object_arg::ObjectNullArg<T> {
+        crate::obj::object_arg::ObjectNullArg(std::marker::PhantomData)
+    }
+}
+
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Trait impls
+
+impl<T: GodotClass> Deref for Gd<T> {
+    // Target is always an engine class:
+    // * if T is an engine class => T
+    // * if T is a user class => T::Base
+    type Target = GdDerefTarget<T>;
+
+    fn deref(&self) -> &Self::Target {
+        self.raw.as_target()
+    }
+}
+
+impl<T: GodotClass> DerefMut for Gd<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.raw.as_target_mut()
+    }
+}
 
 impl<T: GodotClass> GodotConvert for Gd<T> {
     type Via = Gd<T>;
 }
 
 impl<T: GodotClass> ToGodot for Gd<T> {
-    fn to_godot(&self) -> Self::Via {
+    type ToVia<'v> = Gd<T>;
+
+    fn to_godot(&self) -> Self::ToVia<'_> {
         self.raw.check_rtti("to_godot");
         self.clone()
-    }
-
-    fn into_godot(self) -> Self::Via {
-        self.raw.check_rtti("into_godot");
-        self
     }
 }
 
@@ -662,8 +696,11 @@ impl<T: GodotClass> FromGodot for Gd<T> {
 impl<T: GodotClass> GodotType for Gd<T> {
     type Ffi = RawGd<T>;
 
-    fn to_ffi(&self) -> Self::Ffi {
-        self.raw.clone()
+    type ToFfi<'f> = RefArg<'f, RawGd<T>>
+    where Self: 'f;
+
+    fn to_ffi(&self) -> Self::ToFfi<'_> {
+        RefArg::new(&self.raw)
     }
 
     fn into_ffi(self) -> Self::Ffi {
@@ -702,8 +739,38 @@ impl<T: GodotClass> GodotType for Gd<T> {
     }
 }
 
-impl<T: GodotClass> ArrayElement for Gd<T> {}
-impl<T: GodotClass> ArrayElement for Option<Gd<T>> {}
+impl<T: GodotClass> ArrayElement for Gd<T> {
+    fn element_type_string() -> String {
+        // See also impl Export for Gd<T>.
+
+        let hint = if T::inherits::<classes::Resource>() {
+            Some(PropertyHint::RESOURCE_TYPE)
+        } else if T::inherits::<classes::Node>() {
+            Some(PropertyHint::NODE_TYPE)
+        } else {
+            None
+        };
+
+        // Exportable classes (Resource/Node based) include the {RESOURCE|NODE}_TYPE hint + the class name.
+        if let Some(export_hint) = hint {
+            format!(
+                "{variant}/{hint}:{class}",
+                variant = VariantType::OBJECT.ord(),
+                hint = export_hint.ord(),
+                class = T::class_name()
+            )
+        } else {
+            // Previous impl: format!("{variant}:", variant = VariantType::OBJECT.ord())
+            unreachable!("element_type_string() should only be invoked for exportable classes")
+        }
+    }
+}
+
+impl<T: GodotClass> ArrayElement for Option<Gd<T>> {
+    fn element_type_string() -> String {
+        Gd::<T>::element_type_string()
+    }
+}
 
 impl<T> Default for Gd<T>
 where
@@ -724,24 +791,8 @@ where
 impl<T: GodotClass> Clone for Gd<T> {
     fn clone(&self) -> Self {
         out!("Gd::clone");
-        Self::from_ffi(self.raw.clone())
-    }
-}
-
-impl<T: GodotClass> TypeStringHint for Gd<T> {
-    fn type_string() -> String {
-        use crate::global::PropertyHint;
-
-        match Self::default_export_info().hint {
-            hint @ (PropertyHint::RESOURCE_TYPE | PropertyHint::NODE_TYPE) => {
-                format!(
-                    "{}/{}:{}",
-                    VariantType::OBJECT.ord(),
-                    hint.ord(),
-                    T::class_name()
-                )
-            }
-            _ => format!("{}:", VariantType::OBJECT.ord()),
+        Self {
+            raw: self.raw.clone(),
         }
     }
 }
@@ -758,14 +809,17 @@ impl<T: GodotClass> Var for Gd<T> {
     }
 }
 
-impl<T: GodotClass> Export for Gd<T> {
-    fn default_export_info() -> PropertyHintInfo {
+impl<T> Export for Gd<T>
+where
+    T: GodotClass + Bounds<Exportable = bounds::Yes>,
+{
+    fn export_hint() -> PropertyHintInfo {
         let hint = if T::inherits::<classes::Resource>() {
             PropertyHint::RESOURCE_TYPE
         } else if T::inherits::<classes::Node>() {
             PropertyHint::NODE_TYPE
         } else {
-            PropertyHint::NONE
+            unreachable!("classes not inheriting from Resource or Node should not be exportable")
         };
 
         // Godot does this by default too; the hint is needed when the class is a resource/node,
@@ -773,6 +827,11 @@ impl<T: GodotClass> Export for Gd<T> {
         let hint_string = T::class_name().to_gstring();
 
         PropertyHintInfo { hint, hint_string }
+    }
+
+    #[doc(hidden)]
+    fn as_node_class() -> Option<ClassName> {
+        T::inherits::<classes::Node>().then(|| T::class_name())
     }
 }
 
@@ -817,7 +876,3 @@ impl<T: GodotClass> std::hash::Hash for Gd<T> {
 // its mutability is anyway present, in the Godot engine.
 impl<T: GodotClass> std::panic::UnwindSafe for Gd<T> {}
 impl<T: GodotClass> std::panic::RefUnwindSafe for Gd<T> {}
-
-#[deprecated = "Removed; see `Gd::try_to_unique()`"]
-#[doc(hidden)] // No longer advertise in API docs.
-pub type NotUniqueError = ();

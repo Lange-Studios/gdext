@@ -100,30 +100,6 @@ pub unsafe trait GodotFfi {
     unsafe fn move_return_ptr(self, dst: sys::GDExtensionTypePtr, call_type: PtrcallType);
 }
 
-// In Godot 4.0.x, a lot of that are "constructed into" require a default-initialized value.
-// In Godot 4.1+, placement new is used, requiring no prior value.
-// This method abstracts over that. Outside of GodotFfi because it should not be overridden.
-
-/// # Safety
-///
-/// See [`GodotFfi::new_with_uninit`] and [`GodotFfi::new_with_init`].
-#[cfg(before_api = "4.1")]
-pub unsafe fn new_with_uninit_or_init<T: GodotFfi>(
-    init_fn: impl FnOnce(sys::GDExtensionTypePtr),
-) -> T {
-    T::new_with_init(init_fn)
-}
-
-/// # Safety
-///
-/// See [`GodotFfi::new_with_uninit`] and [`GodotFfi::new_with_init`].
-#[cfg(since_api = "4.1")]
-pub unsafe fn new_with_uninit_or_init<T: GodotFfi>(
-    init_fn: impl FnOnce(sys::GDExtensionUninitializedTypePtr),
-) -> T {
-    T::new_with_uninit(init_fn)
-}
-
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
 /// Types that can represent null-values.
@@ -133,8 +109,13 @@ pub unsafe fn new_with_uninit_or_init<T: GodotFfi>(
 /// This is currently only implemented for `RawGd`.
 // TODO: Consider implementing for `Variant`.
 pub trait GodotNullableFfi: Sized + GodotFfi {
-    fn flatten_option(opt: Option<Self>) -> Self;
+    fn null() -> Self;
+
     fn is_null(&self) -> bool;
+
+    fn flatten_option(opt: Option<Self>) -> Self {
+        opt.unwrap_or_else(Self::null)
+    }
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -167,9 +148,10 @@ pub enum PtrcallType {
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Macros to choose a certain implementation of `GodotFfi` trait for GDExtensionTypePtr;
-// or a free-standing `impl` for concrete sys pointers such as GDExtensionObjectPtr.
+// or a freestanding `impl` for concrete sys pointers such as GDExtensionObjectPtr.
 // See doc comment of `ffi_methods!` for information
 
+// TODO: explicitly document safety invariants.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! ffi_methods_one {
@@ -323,14 +305,14 @@ macro_rules! ffi_methods_rest {
 ///
 /// ## Using `*mut Opaque`
 ///
-/// Turning pointer call arguments into a value is simply calling `from_opaque` on the
+/// Turning ptrcall arguments into a value is simply calling `from_opaque` on the
 /// dereferenced argument pointer.
 /// Returning a value from a pointer call is simply calling [`std::ptr::swap`] on the return pointer
 /// and the address to the `opaque` field.
 ///  
 /// ## Using `*mut Self`
 ///
-/// Turning pointer call arguments into a value is a dereference.
+/// Turning ptrcall arguments into a value is a dereferencing.
 /// Returning a value from a pointer call is `*ret_ptr = value`.
 #[macro_export]
 macro_rules! ffi_methods {

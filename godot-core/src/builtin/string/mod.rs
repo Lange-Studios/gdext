@@ -10,7 +10,6 @@
 mod gstring;
 mod macros;
 mod node_path;
-mod string_chars;
 mod string_name;
 
 use crate::meta::error::ConvertError;
@@ -25,7 +24,10 @@ impl GodotConvert for &str {
 }
 
 impl ToGodot for &str {
-    fn to_godot(&self) -> Self::Via {
+    type ToVia<'v> = GString
+    where Self: 'v;
+
+    fn to_godot(&self) -> Self::ToVia<'_> {
         GString::from(*self)
     }
 }
@@ -35,7 +37,9 @@ impl GodotConvert for String {
 }
 
 impl ToGodot for String {
-    fn to_godot(&self) -> Self::Via {
+    type ToVia<'v> = Self::Via;
+
+    fn to_godot(&self) -> Self::ToVia<'_> {
         GString::from(self)
     }
 }

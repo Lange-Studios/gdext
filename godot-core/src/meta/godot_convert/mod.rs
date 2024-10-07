@@ -19,7 +19,8 @@ use crate::meta::GodotType;
 ///
 /// [`GodotType`] is a stronger bound than [`GodotConvert`], since it expresses that a type is _directly_ representable
 /// in Godot (without intermediate "via"). Every `GodotType` also implements `GodotConvert` with `Via = Self`.
-
+///
+/// Please read the [`godot::meta` module docs][crate::meta] for further information about conversions.
 #[diagnostic::on_unimplemented(
     message = "`GodotConvert` is needed for `#[func]` parameters/returns, as well as `#[var]` and `#[export]` properties",
     note = "check following errors for more information"
@@ -31,21 +32,21 @@ pub trait GodotConvert {
 
 /// Defines the canonical conversion to Godot for a type.
 ///
-/// It is assumed that all the methods return equal values given equal inputs. Additionally it is assumed
+/// It is assumed that all the methods return equal values given equal inputs. Additionally, it is assumed
 /// that if [`FromGodot`] is implemented, converting to Godot and back again will return a value equal to the
 /// starting value.
 ///
 /// Violating these assumptions is safe but will give unexpected results.
+///
+/// Please read the [`godot::meta` module docs][crate::meta] for further information about conversions.
 pub trait ToGodot: Sized + GodotConvert {
-    /// Converts this type to the Godot type by reference, usually by cloning.
-    fn to_godot(&self) -> Self::Via;
+    /// Target type of [`to_godot()`](ToGodot::to_godot), which differs from [`Via`](GodotConvert::Via) for pass-by-reference types.
+    type ToVia<'v>: GodotType
+    where
+        Self: 'v;
 
-    /// Converts this type to the Godot type.
-    ///
-    /// This can in some cases enable minor optimizations, such as avoiding reference counting operations.
-    fn into_godot(self) -> Self::Via {
-        self.to_godot()
-    }
+    /// Converts this type to the Godot type by reference, usually by cloning.
+    fn to_godot(&self) -> Self::ToVia<'_>;
 
     /// Converts this type to a [Variant].
     fn to_variant(&self) -> Variant {
@@ -60,6 +61,8 @@ pub trait ToGodot: Sized + GodotConvert {
 /// starting value.
 ///
 /// Violating these assumptions is safe but will give unexpected results.
+///
+/// Please read the [`godot::meta` module docs][crate::meta] for further information about conversions.
 pub trait FromGodot: Sized + GodotConvert {
     /// Converts the Godot representation to this type, returning `Err` on failure.
     fn try_from_godot(via: Self::Via) -> Result<Self, ConvertError>;
@@ -86,13 +89,17 @@ pub trait FromGodot: Sized + GodotConvert {
     /// # Panics
     /// If the conversion fails.
     fn from_variant(variant: &Variant) -> Self {
-        Self::try_from_variant(variant)
-            .unwrap_or_else(|err| panic!("FromGodot::from_variant() failed: {err}"))
+        Self::try_from_variant(variant).unwrap_or_else(|err| {
+            eprintln!("FromGodot::from_variant() failed: {err}");
+            panic!()
+        })
     }
 }
 
-pub(crate) fn into_ffi<T: ToGodot>(value: T) -> <T::Via as GodotType>::Ffi {
-    value.into_godot().into_ffi()
+pub(crate) fn into_ffi_variant<T: ToGodot>(value: &T) -> Variant {
+    let via = value.to_godot();
+    let ffi = via.to_ffi();
+    GodotFfiVariant::ffi_to_variant(&ffi)
 }
 
 pub(crate) fn try_from_ffi<T: FromGodot>(
@@ -110,14 +117,11 @@ macro_rules! impl_godot_as_self {
         }
 
         impl $crate::meta::ToGodot for $T {
-            #[inline]
-            fn to_godot(&self) -> Self::Via {
-                self.clone()
-            }
+            type ToVia<'v> = Self::Via;
 
             #[inline]
-            fn into_godot(self) -> Self::Via {
-                self
+            fn to_godot(&self) -> Self::ToVia<'_> {
+                self.clone()
             }
         }
 

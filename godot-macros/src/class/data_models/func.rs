@@ -5,7 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::util::{bail_fn, ident};
+use crate::class::RpcAttr;
+use crate::util::{bail_fn, ident, safe_ident};
 use crate::{util, ParseResult};
 use proc_macro2::{Group, Ident, TokenStream, TokenTree};
 use quote::{format_ident, quote};
@@ -19,12 +20,13 @@ pub struct FuncDefinition {
     /// The name the function will be exposed as in Godot. If `None`, the Rust function name is used.
     pub rename: Option<String>,
     pub is_script_virtual: bool,
+    /// Information about the RPC configuration, if provided.
+    pub rpc_info: Option<RpcAttr>,
 }
 
 /// Returns a C function which acts as the callback when a virtual method of this instance is invoked.
 //
-// There are currently no virtual static methods. Additionally, virtual static methods don't really make a lot
-// of sense. Therefore, there is no need to support them.
+// Virtual methods are non-static by their nature; so there's no support for static ones.
 pub fn make_virtual_callback(
     class_name: &Ident,
     signature_info: SignatureInfo,
@@ -52,7 +54,10 @@ pub fn make_virtual_callback(
                 ret: sys::GDExtensionTypePtr,
             ) {
                 let call_ctx = #call_ctx;
-                #invocation;
+                let _success = ::godot::private::handle_ptrcall_panic(
+                    &call_ctx,
+                    || #invocation
+                );
             }
             Some(virtual_fn)
         }
@@ -116,12 +121,9 @@ pub fn make_method_registration(
             #varcall_fn_decl;
             #ptrcall_fn_decl;
 
-            // SAFETY:
-            // `get_varcall_func` upholds all the requirements for `call_func`.
-            // `get_ptrcall_func` upholds all the requirements for `ptrcall_func`
+            // SAFETY: varcall_fn + ptrcall_fn interpret their in/out parameters correctly.
             let method_info = unsafe {
-                ClassMethodInfo::from_signature::<Sig>(
-                    #class_name::class_name(),
+                ClassMethodInfo::from_signature::<#class_name, Sig>(
                     method_name,
                     Some(varcall_fn),
                     Some(ptrcall_fn),
@@ -129,7 +131,6 @@ pub fn make_method_registration(
                     &[
                         #( #param_ident_strs ),*
                     ],
-                    Vec::new()
                 )
             };
 
@@ -366,7 +367,7 @@ pub(crate) fn maybe_rename_parameter(param_ident: Ident, next_unnamed_index: &mu
         // This could technically collide with another parameter of the same name (without "_"), but that's very unlikely and not
         // something we really need to support.
         // Note that the case of a single "_" is handled above.
-        ident(remain)
+        safe_ident(remain)
     } else {
         param_ident
     }

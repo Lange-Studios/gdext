@@ -7,13 +7,17 @@
 
 use crate::generator::default_parameters;
 use crate::models::domain::{FnParam, FnQualifier, Function, RustTy};
-use crate::util::safe_ident;
-use proc_macro2::TokenStream;
+use crate::special_cases;
+use crate::util::{lifetime, safe_ident};
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 pub struct FnReceiver {
     /// `&self`, `&mut self`, (none)
     pub param: TokenStream,
+
+    /// `&self`, `&mut self`, (none)
+    pub param_lifetime_a: TokenStream,
 
     /// `ptr::null_mut()`, `self.object_ptr`, `self.sys_ptr`, (none)
     pub ffi_arg: TokenStream,
@@ -27,6 +31,7 @@ impl FnReceiver {
     pub fn global_function() -> FnReceiver {
         FnReceiver {
             param: TokenStream::new(),
+            param_lifetime_a: TokenStream::new(),
             ffi_arg: TokenStream::new(),
             self_prefix: TokenStream::new(),
         }
@@ -37,6 +42,7 @@ pub struct FnCode {
     pub receiver: FnReceiver,
     pub varcall_invocation: TokenStream,
     pub ptrcall_invocation: TokenStream,
+    pub is_virtual_required: bool,
 }
 
 pub struct FnDefinition {
@@ -82,6 +88,54 @@ impl FnDefinitions {
     }
 }
 
+// Gathers multiple token vectors related to function parameters.
+#[derive(Default)]
+pub struct FnParamTokens {
+    pub params: Vec<TokenStream>,
+    pub param_types: Vec<TokenStream>,
+    pub param_lifetime_count: usize,
+    pub arg_names: Vec<TokenStream>,
+    pub func_general_lifetime: Option<TokenStream>,
+}
+
+impl FnParamTokens {
+    pub fn push_regular(
+        &mut self,
+        param_name: &Ident,
+        param_ty: &RustTy,
+        // TODO refactor into single enum
+        by_value: bool,
+        arg_is_ref_arg: bool,
+        explicit_lifetimes: bool,
+    ) {
+        if by_value {
+            self.params.push(quote! { #param_name: #param_ty });
+            self.param_types.push(quote! { #param_ty });
+            self.arg_names.push(quote! { #param_name });
+        } else {
+            if explicit_lifetimes {
+                self.params.push(quote! { #param_name: &'a #param_ty });
+            } else {
+                self.params.push(quote! { #param_name: & #param_ty });
+            }
+
+            if arg_is_ref_arg {
+                let lft = lifetime(&format!("a{}", self.param_lifetime_count));
+
+                self.param_types.push(quote! { RefArg<#lft, #param_ty> });
+                self.arg_names.push(quote! { RefArg::new(#param_name) });
+
+                self.param_lifetime_count += 1;
+            } else {
+                self.param_types.push(quote! { #param_ty });
+                self.arg_names.push(quote! { #param_name });
+
+                self.func_general_lifetime = Some(quote! { <'a> });
+            }
+        }
+    }
+}
+
 pub fn make_function_definition(
     sig: &dyn Function,
     code: &FnCode,
@@ -118,32 +172,71 @@ pub fn make_function_definition(
         (TokenStream::new(), TokenStream::new())
     };
 
-    let [params, param_types, arg_names] = make_params_exprs(sig.params());
+    let FnParamTokens {
+        params,
+        param_types,
+        param_lifetime_count,
+        arg_names,
+        func_general_lifetime: fn_lifetime,
+    } = if sig.is_virtual() {
+        make_params_exprs_virtual(sig.params().iter(), sig)
+    } else {
+        // primary_function() if not default-params, or full_function() otherwise.
+        make_params_exprs(
+            sig.params().iter(),
+            !has_default_params, // For *_full function, we don't need impl AsObjectArg<T> parameters
+            !has_default_params, // or arg.as_object_arg() calls.
+            true,                // but we do need RefArg.
+            false,
+        )
+    };
 
     let rust_function_name_str = sig.name();
-    let primary_fn_name = if has_default_params {
-        format_ident!("{}_full", safe_ident(rust_function_name_str))
+
+    let (primary_fn_name, default_fn_code, default_structs_code);
+    if has_default_params {
+        primary_fn_name = format_ident!("{}_full", safe_ident(rust_function_name_str));
+
+        (default_fn_code, default_structs_code) =
+            default_parameters::make_function_definition_with_defaults(
+                sig,
+                code,
+                &primary_fn_name,
+                cfg_attributes,
+            );
     } else {
-        safe_ident(rust_function_name_str)
+        primary_fn_name = safe_ident(rust_function_name_str);
+        default_fn_code = TokenStream::new();
+        default_structs_code = TokenStream::new();
     };
 
-    let (default_fn_code, default_structs_code) = if has_default_params {
-        default_parameters::make_function_definition_with_defaults(
-            sig,
-            code,
-            &primary_fn_name,
-            cfg_attributes,
-        )
-    } else {
-        (TokenStream::new(), TokenStream::new())
-    };
+    let call_sig_decl = {
+        let return_ty = &sig.return_value().type_tokens();
 
-    let return_ty = &sig.return_value().type_tokens();
-    let call_sig = quote! {
-        ( #return_ty, #(#param_types),* )
+        // Build <'a0, 'a1, ...> for lifetimes.
+        let param_lifetimes = if param_lifetime_count > 0 {
+            let mut tokens = quote! { < };
+            for i in 0..param_lifetime_count {
+                let i = lifetime(&format!("a{i}"));
+                tokens.extend(quote! {  #i, });
+            }
+            tokens.extend(quote! { > });
+            tokens
+        } else {
+            TokenStream::new()
+        };
+
+        quote! {
+            type CallSig #param_lifetimes = ( #return_ty, #(#param_types),* );
+        }
     };
 
     let return_decl = &sig.return_value().decl;
+    let fn_body = if code.is_virtual_required {
+        quote! { ; }
+    } else {
+        quote! { { unimplemented!() } }
+    };
 
     let receiver_param = &code.receiver.param;
     let primary_function = if sig.is_virtual() {
@@ -151,12 +244,10 @@ pub fn make_function_definition(
 
         quote! {
             #maybe_safety_doc
-            #maybe_unsafe fn #primary_fn_name(
+            #maybe_unsafe fn #primary_fn_name (
                 #receiver_param
                 #( #params, )*
-            ) #return_decl {
-                unimplemented!()
-            }
+            ) #return_decl #fn_body
         }
     } else if sig.is_vararg() {
         // Varargs (usually varcall, but not necessarily -- utilities use ptrcall)
@@ -168,12 +259,12 @@ pub fn make_function_definition(
         if code.receiver.param.is_empty() {
             quote! {
                 #maybe_safety_doc
-                #vis #maybe_unsafe fn #primary_fn_name(
+                #vis #maybe_unsafe fn #primary_fn_name (
                     #receiver_param
                     #( #params, )*
                     varargs: &[Variant]
                 ) #return_decl {
-                    type CallSig = #call_sig;
+                    #call_sig_decl
 
                     let args = (#( #arg_names, )*);
 
@@ -189,17 +280,29 @@ pub fn make_function_definition(
             // Note: all varargs functions are non-static, which is why there are some shortcuts in try_*() argument forwarding.
             // This can be made more complex if ever necessary.
 
+            // A function() may call try_function(), its arguments should not have .as_object_arg().
+            let FnParamTokens {
+                arg_names: arg_names_without_asarg,
+                ..
+            } = make_params_exprs(
+                sig.params().iter(),
+                !has_default_params, // For *_full function, we don't need impl AsObjectArg<T> parameters
+                false,               // or arg.as_object_arg() calls.
+                true,                // but we do need RefArg.
+                false,
+            );
+
             quote! {
                 /// # Panics
                 /// This is a _varcall_ method, meaning parameters and return values are passed as `Variant`.
                 /// It can detect call failures and will panic in such a case.
                 #maybe_safety_doc
-                #vis #maybe_unsafe fn #primary_fn_name(
+                #vis #maybe_unsafe fn #primary_fn_name (
                     #receiver_param
                     #( #params, )*
                     varargs: &[Variant]
                 ) #return_decl {
-                    Self::#try_fn_name(self, #( #arg_names, )* varargs)
+                    Self::#try_fn_name(self, #( #arg_names_without_asarg, )* varargs)
                         .unwrap_or_else(|e| panic!("{e}"))
                 }
 
@@ -212,7 +315,7 @@ pub fn make_function_definition(
                     #( #params, )*
                     varargs: &[Variant]
                 ) #try_return_decl {
-                    type CallSig = #call_sig;
+                    #call_sig_decl
 
                     let args = (#( #arg_names, )*);
 
@@ -229,11 +332,11 @@ pub fn make_function_definition(
 
         quote! {
             #maybe_safety_doc
-            #vis #maybe_unsafe fn #primary_fn_name(
+            #vis #maybe_unsafe fn #primary_fn_name #fn_lifetime (
                 #receiver_param
                 #( #params, )*
             ) #return_decl {
-                type CallSig = #call_sig;
+                #call_sig_decl
 
                 let args = (#( #arg_names, )*);
 
@@ -256,11 +359,11 @@ pub fn make_function_definition(
 pub fn make_receiver(qualifier: FnQualifier, ffi_arg_in: TokenStream) -> FnReceiver {
     assert_ne!(qualifier, FnQualifier::Global, "expected class");
 
-    let param = match qualifier {
-        FnQualifier::Const => quote! { &self, },
-        FnQualifier::Mut => quote! { &mut self, },
-        FnQualifier::Static => quote! {},
-        FnQualifier::Global => quote! {},
+    let (param, param_lifetime_a) = match qualifier {
+        FnQualifier::Const => (quote! { &self, }, quote! { &'a self, }),
+        FnQualifier::Mut => (quote! { &mut self, }, quote! { &'a mut self, }),
+        FnQualifier::Static => (quote! {}, quote! {}),
+        FnQualifier::Global => (quote! {}, quote! {}),
     };
 
     let (ffi_arg, self_prefix);
@@ -274,23 +377,11 @@ pub fn make_receiver(qualifier: FnQualifier, ffi_arg_in: TokenStream) -> FnRecei
 
     FnReceiver {
         param,
+        param_lifetime_a,
         ffi_arg,
         self_prefix,
     }
 }
-
-pub fn make_params_and_args(method_args: &[&FnParam]) -> (Vec<TokenStream>, Vec<TokenStream>) {
-    method_args
-        .iter()
-        .map(|param| {
-            let param_name = &param.name;
-            let param_ty = &param.type_;
-
-            (quote! { #param_name: #param_ty }, quote! { #param_name })
-        })
-        .unzip()
-}
-
 pub fn make_vis(is_private: bool) -> TokenStream {
     if is_private {
         quote! { pub(crate) }
@@ -302,21 +393,95 @@ pub fn make_vis(is_private: bool) -> TokenStream {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Implementation
 
-fn make_params_exprs(method_args: &[FnParam]) -> [Vec<TokenStream>; 3] {
-    let mut params = vec![];
-    let mut param_types = vec![];
-    let mut arg_names = vec![];
+/// For non-virtual functions, returns the parameter declarations, type tokens, and names.
+pub(crate) fn make_params_exprs<'a>(
+    method_args: impl Iterator<Item = &'a FnParam>,
+    param_is_impl_asarg: bool,
+    arg_is_asarg: bool,
+    arg_is_ref_arg: bool,
+    explicit_lifetimes: bool,
+) -> FnParamTokens {
+    let mut ret = FnParamTokens::default();
 
-    for param in method_args.iter() {
+    for param in method_args {
         let param_name = &param.name;
         let param_ty = &param.type_;
 
-        params.push(quote! { #param_name: #param_ty });
-        param_types.push(quote! { #param_ty });
-        arg_names.push(quote! { #param_name });
+        match &param.type_ {
+            // Non-virtual functions: Objects (Gd<T>) use implicit conversions via AsObjectArg.
+            RustTy::EngineClass {
+                object_arg,
+                impl_as_object_arg,
+                ..
+            } => {
+                // Parameter declarations in signature: impl AsObjectArg<T>
+                if param_is_impl_asarg {
+                    ret.params.push(quote! { #param_name: #impl_as_object_arg });
+                } else {
+                    ret.params.push(quote! { #param_name: #object_arg });
+                }
+
+                // Argument names in function body: arg.as_object_arg() vs. arg
+                if arg_is_asarg {
+                    ret.arg_names.push(quote! { #param_name.as_object_arg() });
+                } else {
+                    ret.arg_names.push(quote! { #param_name });
+                }
+
+                ret.param_types.push(quote! { #object_arg });
+            }
+
+            // Arrays and non-Copy builtins: pass by ref.
+            ty if ty.is_pass_by_ref() => {
+                ret.push_regular(
+                    param_name,
+                    param_ty,
+                    false,
+                    arg_is_ref_arg,
+                    explicit_lifetimes,
+                );
+            }
+
+            // All other methods and parameter types: standard handling.
+            _ => ret.push_regular(param_name, param_ty, true, false, false),
+        }
     }
 
-    [params, param_types, arg_names]
+    ret
+}
+
+/// For virtual functions, returns the parameter declarations, type tokens, and names.
+pub(crate) fn make_params_exprs_virtual<'a>(
+    method_args: impl Iterator<Item = &'a FnParam>,
+    function_sig: &dyn Function,
+) -> FnParamTokens {
+    let mut ret = FnParamTokens::default();
+
+    for param in method_args {
+        let param_name = &param.name;
+        let param_ty = &param.type_;
+
+        match &param.type_ {
+            // Virtual methods accept Option<Gd<T>>, since we don't know whether objects are nullable or required.
+            RustTy::EngineClass { .. }
+                if !special_cases::is_class_method_param_required(
+                    function_sig.surrounding_class().unwrap(),
+                    function_sig.name(),
+                    param_name,
+                ) =>
+            {
+                ret.params.push(quote! { #param_name: Option<#param_ty> });
+                ret.arg_names.push(quote! { #param_name });
+                ret.param_types.push(quote! { #param_ty });
+            }
+
+            // All other methods and parameter types: standard handling.
+            // For now, virtual methods always receive their parameter by value.
+            _ => ret.push_regular(param_name, param_ty, true, false, false),
+        }
+    }
+
+    ret
 }
 
 fn function_uses_pointers(sig: &dyn Function) -> bool {
