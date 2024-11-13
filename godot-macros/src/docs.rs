@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+
 mod markdown_converter;
 
 use crate::class::{ConstDefinition, Field, FuncDefinition, SignalDefinition};
@@ -20,7 +21,7 @@ pub fn make_definition_docs(
         let base_escaped = xml_escape(base);
         let desc_escaped = xml_escape(make_docs_from_attributes(description)?);
         let members = members
-            .into_iter()
+            .iter()
             .filter(|x| x.var.is_some() | x.export.is_some())
             .filter_map(member)
             .collect::<String>();
@@ -111,7 +112,7 @@ fn siphon_docs_from_attributes(doc: &[Attribute]) -> impl Iterator<Item = String
             _ => None,
         })
         .flat_map(|doc| {
-            doc.into_iter().map(|x| {
+            doc.iter().map(|x| {
                 x.to_string()
                     .trim_start_matches('r')
                     .trim_start_matches('#')
@@ -125,7 +126,7 @@ fn siphon_docs_from_attributes(doc: &[Attribute]) -> impl Iterator<Item = String
 
 fn xml_escape(value: String) -> String {
     // Most strings have no special characters, so this check helps avoid unnecessary string copying
-    if !value.contains(&['&', '<', '>', '"', '\'']) {
+    if !value.contains(['&', '<', '>', '"', '\'']) {
         return value;
     }
 
@@ -182,7 +183,8 @@ fn make_constant_docs(constant: &Constant) -> Option<String> {
         .initializer
         .as_ref()
         .map(|x| x.to_token_stream().to_string())
-        .unwrap_or("null".into());
+        .unwrap_or_else(|| "null".to_string());
+
     Some(format!(
         r#"<constant name="{name}" value="{value}">{docs}</constant>"#,
         name = xml_escape(name),
@@ -223,7 +225,8 @@ pub fn make_virtual_method_docs(method: Function) -> Option<String> {
     let ret = method
         .return_ty
         .map(|x| x.to_token_stream().to_string())
-        .unwrap_or("void".into());
+        .unwrap_or_else(|| "void".to_string());
+
     let params = params(method.params.iter().filter_map(|(x, _)| match x {
         FnParam::Receiver(_) => None,
         FnParam::Typed(y) => Some((&y.name, &y.ty)),

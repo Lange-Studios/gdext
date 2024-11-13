@@ -33,6 +33,8 @@
 //! * [`register`], used to register **your own** Rust symbols (classes, methods, constants etc.) with Godot.
 //! * [`obj`], everything related to handling Godot objects, such as the `Gd<T>` type.
 //! * [`tools`], higher-level utilities that extend the generated code, e.g. `load<T>()`.
+//! * [`meta`], fundamental information about types, properties and conversions.
+//! * [`init`], entry point and global library configuration.
 //!
 //! The [`prelude`] contains often-imported symbols; feel free to `use godot::prelude::*` in your code.
 //! <br><br>
@@ -175,11 +177,15 @@ pub mod register {
     pub use godot_core::registry::property;
     pub use godot_macros::{godot_api, Export, GodotClass, GodotConvert, Var};
 
+    #[cfg(feature = "__codegen-full")]
+    pub use godot_core::registry::RpcConfig;
+
     /// Re-exports used by proc-macro API.
     #[doc(hidden)]
     pub mod private {
         #[cfg(feature = "__codegen-full")]
         pub use godot_core::registry::class::auto_register_rpcs;
+
         pub use godot_core::registry::godot_register_wrappers::*;
         pub use godot_core::registry::{constant, method};
     }

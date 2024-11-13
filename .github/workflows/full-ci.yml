@@ -8,12 +8,17 @@ name: Full CI
 # Runs before merging. Rebases on master to make sure CI passes for latest integration, not only for the PR at the time of creation.
 
 on:
+  # Allow manually triggering the workflow:
+  # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#workflow_dispatch
+  workflow_dispatch:
   merge_group:
 #  push:
 
 
 env:
-  GDEXT_FEATURES: ''
+  # Applies to all 'register-docs' features across crates.
+  CLIPPY_FEATURES: '--features register-docs'
+  TEST_FEATURES: ''
   RETRY: ${{ github.workspace }}/.github/other/retry.sh
 
   # ASan options: https://github.com/google/sanitizers/wiki/AddressSanitizerFlags
@@ -21,8 +26,8 @@ env:
   # * report_objects: list individual leaked objects when running LeakSanitizer
   LSAN_OPTIONS: report_objects=1
 
-  CARGO_DENY_VERSION: "0.15.1"
-  CARGO_MACHETE_VERSION: "0.6.2"
+  CARGO_DENY_VERSION: "0.16.1"
+  CARGO_MACHETE_VERSION: "0.7.0"
 
 
 defaults:
@@ -37,7 +42,7 @@ defaults:
 jobs:
   # Keep all in sync with minimal-ci and release-version.
   rustfmt:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +69,7 @@ jobs:
 
   # Needs to be its own job (apart from sync-doc), because lints don't work with --no-deps, and because it contributes to ci-status.
   doc-lints:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
 
@@ -84,7 +89,7 @@ jobs:
 
 
   clippy:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -99,7 +104,7 @@ jobs:
       # Note: could use `-- --no-deps` to not lint dependencies, however it doesn't really speed up and also skips deps in workspace.
       - name: "Check clippy"
         run: |
-          cargo clippy --all-targets $GDEXT_FEATURES -- \
+          cargo clippy --all-targets $CLIPPY_FEATURES -- \
           -D clippy::suspicious \
           -D clippy::style \
           -D clippy::complexity \
@@ -129,16 +134,16 @@ jobs:
           # Don't use latest Ubuntu (22.04) as it breaks lots of ecosystem compatibility.
           # If ever moving to ubuntu-latest, need to manually install libtinfo5 for LLVM.
           - name: linux
-            os: ubuntu-20.04
+            os: ubuntu-22.04
 
           - name: linux
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             rust-toolchain: nightly
             rust-special: -minimal-deps
             rust-cache-key: minimal-deps
 
           - name: linux
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             rust-toolchain: "1.80"
             rust-special: -msrv
 
@@ -161,15 +166,15 @@ jobs:
         run: cargo +nightly update -Z minimal-versions
 
       - name: "Compile tests"
-        run: cargo test $GDEXT_FEATURES --no-run ${{ matrix.rust-extra-args }}
+        run: cargo test $TEST_FEATURES --no-run ${{ matrix.rust-extra-args }}
 
       - name: "Test"
-        run: cargo test $GDEXT_FEATURES ${{ matrix.rust-extra-args }}
+        run: cargo test $TEST_FEATURES ${{ matrix.rust-extra-args }}
 
 
   miri-test:
     name: miri-test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -193,7 +198,7 @@ jobs:
 
   proptest:
     name: proptest
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -237,19 +242,19 @@ jobs:
           # macOS -- for the unintuitive naming, see https://github.com/actions/runner-images?tab=readme-ov-file#available-images
 
           - name: macos-x86
-            os: macos-12
+            os: macos-13
             artifact-name: macos-x86-nightly
             godot-binary: godot.macos.editor.dev.x86_64
             with-hot-reload: true
 
           - name: macos-double-x86
-            os: macos-12
+            os: macos-13
             artifact-name: macos-double-x86-nightly
             godot-binary: godot.macos.editor.dev.double.x86_64
             rust-extra-args: --features godot/api-custom,godot/double-precision
 
           - name: macos-x86-4.2
-            os: macos-12
+            os: macos-13
             artifact-name: macos-x86-4.2
             godot-binary: godot.macos.editor.dev.x86_64
             godot-prebuilt-patch: '4.2.2'
@@ -307,7 +312,7 @@ jobs:
           # Uses full+experimental codegen, so that compatibility breakage towards nightly is detected.
           # If the experimental part causes problems, consider using only godot/__codegen-full.
           - name: linux-full
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             rust-extra-args: --features itest/codegen-full
@@ -315,19 +320,19 @@ jobs:
 
           # Combines now a lot of features, but should be OK. lazy-function-tables doesn't work with experimental-threads.
           - name: linux-double-lazy
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-double-nightly
             godot-binary: godot.linuxbsd.editor.dev.double.x86_64
             rust-extra-args: --features godot/api-custom,godot/double-precision,itest/codegen-full,godot/lazy-function-tables
 
           - name: linux-features-experimental
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             rust-extra-args: --features itest/experimental-threads,itest/codegen-full-experimental,godot/api-custom,godot/serde,itest/register-docs
 
           - name: linux-release
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-release-nightly
             godot-binary: godot.linuxbsd.template_release.x86_64
             rust-extra-args: --release
@@ -336,13 +341,13 @@ jobs:
           # Linux compat (4.1 disabled, already covered by memcheck)
 
           - name: linux-4.3
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-4.3
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             #godot-prebuilt-patch: '4.3.x'
 
           - name: linux-4.2
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-4.2
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             godot-prebuilt-patch: '4.2.2'
@@ -355,7 +360,7 @@ jobs:
           #
           # There is also a gcc variant besides clang, which is currently not used.
           - name: linux-memcheck-nightly
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-memcheck-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64.llvm.san
             rust-toolchain: nightly
@@ -365,7 +370,7 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
 
           - name: linux-memcheck-4.1
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-memcheck-4.1
             godot-binary: godot.linuxbsd.editor.dev.x86_64.llvm.san
             godot-prebuilt-patch: '4.1' # check compat of API 4.1.0 with newer binaries.
@@ -401,7 +406,7 @@ jobs:
 
 
   run-examples:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -423,7 +428,7 @@ jobs:
 
 
   cargo-deny-machete:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -449,7 +454,7 @@ jobs:
 
 
   license-guard:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -483,7 +488,7 @@ jobs:
       - cargo-deny-machete
       - license-guard
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       # Deliberate choice to use bash script and not GitHub Action glob syntax, as that is not well-documented and hard to get right.
       # For example: contains(needs.*.result, 'success') does NOT work because * is a logical OR, thus true if a single job succeeds.

@@ -21,8 +21,9 @@ on:
 
 
 env:
-  GDEXT_FEATURES: ''
-  #  GDEXT_FEATURES: '--features crate/feature'
+  # Applies to all 'register-docs' features across crates.
+  CLIPPY_FEATURES: '--features register-docs'
+  TEST_FEATURES: ''
   #  GDEXT_CRATE_ARGS: '-p godot-codegen -p godot-ffi -p godot-core -p godot-macros -p godot'
   RETRY: ${{ github.workspace }}/.github/other/retry.sh
 
@@ -39,7 +40,7 @@ concurrency:
 jobs:
 
   rustfmt:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +66,7 @@ jobs:
 
   # Needs to be its own job (apart from sync-doc), because lints don't work with --no-deps, and because it contributes to ci-status.
   doc-lints:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +83,7 @@ jobs:
 
 
   clippy:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -96,7 +97,7 @@ jobs:
 
       - name: "Check clippy"
         run: |
-          cargo clippy --all-targets $GDEXT_FEATURES -- \
+          cargo clippy --all-targets $CLIPPY_FEATURES -- \
           -D clippy::suspicious \
           -D clippy::style \
           -D clippy::complexity \
@@ -109,7 +110,7 @@ jobs:
 
   unit-test:
     name: unit-test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -120,10 +121,10 @@ jobs:
         uses: ./.github/composite/rust
 
       - name: "Compile tests"
-        run: cargo test $GDEXT_FEATURES --no-run
+        run: cargo test $TEST_FEATURES --no-run
 
       - name: "Test"
-        run: cargo test $GDEXT_FEATURES
+        run: cargo test $TEST_FEATURES
 
 
   # For complex matrix workflow, see https://stackoverflow.com/a/65434401
@@ -154,14 +155,14 @@ jobs:
           # Linux
 
           - name: linux-full
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             rust-extra-args: --features itest/codegen-full
             with-hot-reload: true
 
           - name: linux-features-experimental
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             rust-extra-args: --features itest/experimental-threads,itest/codegen-full-experimental,godot/api-custom,godot/serde,itest/register-docs
@@ -169,13 +170,13 @@ jobs:
           # Linux compat
 
           - name: linux-4.1
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-4.1
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             godot-prebuilt-patch: '4.1.4'
 
           - name: linux-4.2
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-4.2
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             godot-prebuilt-patch: '4.2.2'
@@ -183,7 +184,7 @@ jobs:
           # Memory checkers
 
           - name: linux-memcheck
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact-name: linux-memcheck-nightly
             godot-binary: godot.linuxbsd.editor.dev.x86_64.llvm.san
             rust-toolchain: nightly
@@ -216,7 +217,7 @@ jobs:
         shell: bash
 
   run-examples:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -238,7 +239,7 @@ jobs:
 
 
   license-guard:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -269,7 +270,7 @@ jobs:
       - run-examples
       - license-guard
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: "Determine success or failure"
         run: |

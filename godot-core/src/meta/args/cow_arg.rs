@@ -4,22 +4,60 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+
 use crate::builtin::Variant;
 use crate::meta::error::ConvertError;
-use crate::meta::{FromGodot, GodotConvert, GodotFfiVariant, ToGodot};
+use crate::meta::{FromGodot, GodotConvert, GodotFfiVariant, RefArg, ToGodot};
 use crate::sys;
 use godot_ffi::{GodotFfi, GodotNullableFfi, PtrcallType};
 use std::fmt;
 
-pub struct RefArg<'r, T> {
-    /// Only `None` if `T: GodotNullableFfi` and `T::is_null()` is true.
-    shared_ref: Option<&'r T>,
+/// Owned or borrowed value, used when passing arguments through `impl AsArg` to Godot APIs.
+#[doc(hidden)]
+#[derive(PartialEq)] // only for tests.
+pub enum CowArg<'r, T> {
+    Owned(T),
+    Borrowed(&'r T),
 }
 
-impl<'r, T> RefArg<'r, T> {
-    pub fn new(shared_ref: &'r T) -> Self {
-        RefArg {
-            shared_ref: Some(shared_ref),
+impl<'r, T> CowArg<'r, T> {
+    pub fn cow_into_owned(self) -> T
+    where
+        T: Clone,
+    {
+        match self {
+            CowArg::Owned(v) => v,
+            CowArg::Borrowed(r) => r.clone(),
+        }
+    }
+
+    pub fn cow_as_ref(&self) -> &T {
+        match self {
+            CowArg::Owned(v) => v,
+            CowArg::Borrowed(r) => r,
+        }
+    }
+
+    /// Returns the actual argument to be passed to function calls.
+    ///
+    /// [`CowArg`] does not implement [`AsArg<T>`] because a differently-named method is more explicit (fewer errors in codegen),
+    /// and because [`AsArg::consume_arg()`] is not meaningful.
+    pub fn cow_as_arg(&self) -> RefArg<'_, T> {
+        RefArg::new(self.cow_as_ref())
+    }
+}
+
+/// Exists for polymorphism in [`crate::meta::ParamType`].
+///
+/// Necessary for generics in e.g. `Array<T>`, when accepting `impl AsArg<T>` parameters.
+///
+/// `Borrow` may not be the most idiomatic trait for this, but it has the convenient feature that it's implemented for both `T` and `&T`.
+/// Since this is a hidden API, it doesn't matter.
+impl<'r, T> std::borrow::Borrow<T> for CowArg<'r, T> {
+    fn borrow(&self) -> &T {
+        match self {
+            CowArg::Owned(v) => v,
+            CowArg::Borrowed(r) => r,
         }
     }
 }
@@ -28,19 +66,19 @@ macro_rules! wrong_direction {
     ($fn:ident) => {
         unreachable!(concat!(
             stringify!($fn),
-            ": RefArg should only be passed *to* Godot, not *from*."
+            ": CowArg should only be passed *to* Godot, not *from*."
         ))
     };
 }
 
-impl<'r, T> GodotConvert for RefArg<'r, T>
+impl<'r, T> GodotConvert for CowArg<'r, T>
 where
     T: GodotConvert,
 {
     type Via = T::Via;
 }
 
-impl<'r, T> ToGodot for RefArg<'r, T>
+impl<'r, T> ToGodot for CowArg<'r, T>
 where
     T: ToGodot,
 {
@@ -48,16 +86,12 @@ where
     where Self: 'v;
 
     fn to_godot(&self) -> Self::ToVia<'_> {
-        let shared_ref = self
-            .shared_ref
-            .expect("Objects are currently mapped through ObjectArg; RefArg shouldn't be null");
-
-        shared_ref.to_godot()
+        self.cow_as_ref().to_godot()
     }
 }
 
 // TODO refactor signature tuples into separate in+out traits, so FromGodot is no longer needed.
-impl<'r, T> FromGodot for RefArg<'r, T>
+impl<'r, T> FromGodot for CowArg<'r, T>
 where
     T: FromGodot,
 {
@@ -66,17 +100,20 @@ where
     }
 }
 
-impl<'r, T> fmt::Debug for RefArg<'r, T>
+impl<'r, T> fmt::Debug for CowArg<'r, T>
 where
     T: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "&{:?}", self.shared_ref)
+        match self {
+            CowArg::Owned(v) => write!(f, "CowArg::Owned({v:?})"),
+            CowArg::Borrowed(r) => write!(f, "CowArg::Borrowed({r:?})"),
+        }
     }
 }
 
 // SAFETY: delegated to T.
-unsafe impl<'r, T> GodotFfi for RefArg<'r, T>
+unsafe impl<'r, T> GodotFfi for CowArg<'r, T>
 where
     T: GodotFfi,
 {
@@ -97,23 +134,17 @@ where
     }
 
     fn sys(&self) -> sys::GDExtensionConstTypePtr {
-        match self.shared_ref {
-            Some(r) => r.sys(),
-            None => std::ptr::null(),
-        }
+        self.cow_as_ref().sys()
     }
 
     fn sys_mut(&mut self) -> sys::GDExtensionTypePtr {
-        unreachable!("RefArg::sys_mut() currently not used by FFI marshalling layer, but only by specific functions");
+        unreachable!("CowArg::sys_mut() currently not used by FFI marshalling layer, but only by specific functions");
     }
 
     // This function must be overridden; the default delegating to sys() is wrong for e.g. RawGd<T>.
     // See also other manual overrides of as_arg_ptr().
     fn as_arg_ptr(&self) -> sys::GDExtensionConstTypePtr {
-        match self.shared_ref {
-            Some(r) => r.as_arg_ptr(),
-            None => std::ptr::null(),
-        }
+        self.cow_as_ref().as_arg_ptr()
     }
 
     unsafe fn from_arg_ptr(_ptr: sys::GDExtensionTypePtr, _call_type: PtrcallType) -> Self {
@@ -122,19 +153,16 @@ where
 
     unsafe fn move_return_ptr(self, _dst: sys::GDExtensionTypePtr, _call_type: PtrcallType) {
         // This one is implemented, because it's used for return types implementing ToGodot.
-        unreachable!("Calling RefArg::move_return_ptr is a mistake, as RefArg is intended only for arguments. Use the underlying value type.");
+        unreachable!("Calling CowArg::move_return_ptr is a mistake, as CowArg is intended only for arguments. Use the underlying value type.");
     }
 }
 
-impl<'r, T> GodotFfiVariant for RefArg<'r, T>
+impl<'r, T> GodotFfiVariant for CowArg<'r, T>
 where
     T: GodotFfiVariant,
 {
     fn ffi_to_variant(&self) -> Variant {
-        match self.shared_ref {
-            Some(r) => r.ffi_to_variant(),
-            None => Variant::nil(),
-        }
+        self.cow_as_ref().ffi_to_variant()
     }
 
     fn ffi_from_variant(_variant: &Variant) -> Result<Self, ConvertError> {
@@ -142,15 +170,15 @@ where
     }
 }
 
-impl<'r, T> GodotNullableFfi for RefArg<'r, T>
+impl<'r, T> GodotNullableFfi for CowArg<'r, T>
 where
     T: GodotNullableFfi,
 {
     fn null() -> Self {
-        RefArg { shared_ref: None }
+        CowArg::Owned(T::null())
     }
 
     fn is_null(&self) -> bool {
-        self.shared_ref.map(|r| r.is_null()).unwrap_or(true)
+        self.cow_as_ref().is_null()
     }
 }

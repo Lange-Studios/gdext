@@ -16,8 +16,8 @@ use crate::builtin::{Callable, NodePath, StringName, Variant};
 use crate::global::PropertyHint;
 use crate::meta::error::{ConvertError, FromFfiError};
 use crate::meta::{
-    ArrayElement, CallContext, ClassName, FromGodot, GodotConvert, GodotType, PropertyHintInfo,
-    RefArg, ToGodot,
+    ArrayElement, AsArg, CallContext, ClassName, CowArg, FromGodot, GodotConvert, GodotType,
+    ParamType, PropertyHintInfo, RefArg, ToGodot,
 };
 use crate::obj::{
     bounds, cap, Bounds, EngineEnum, GdDerefTarget, GdMut, GdRef, GodotClass, Inherits, InstanceId,
@@ -349,7 +349,7 @@ impl<T: GodotClass> Gd<T> {
     /// where
     ///     T: Inherits<Node>,
     /// {
-    ///     node.upcast_mut().set_name(name.into());
+    ///     node.upcast_mut().set_name(name);
     /// }
     /// ```
     ///
@@ -434,7 +434,7 @@ impl<T: GodotClass> Gd<T> {
     /// Returns a callable referencing a method from this object named `method_name`.
     ///
     /// This is shorter syntax for [`Callable::from_object_method(self, method_name)`][Callable::from_object_method].
-    pub fn callable<S: Into<StringName>>(&self, method_name: S) -> Callable {
+    pub fn callable(&self, method_name: impl AsArg<StringName>) -> Callable {
         Callable::from_object_method(self, method_name)
     }
 
@@ -632,7 +632,7 @@ where
     /// Represents `null` when passing an object argument to Godot.
     ///
     /// This expression is only intended for function argument lists. It can be used whenever a Godot signature accepts
-    /// [`AsObjectArg<T>`][crate::obj::AsObjectArg]. `Gd::null_arg()` as an argument is equivalent to `Option::<Gd<T>>::None`, but less wordy.
+    /// [`AsObjectArg<T>`][crate::meta::AsObjectArg]. `Gd::null_arg()` as an argument is equivalent to `Option::<Gd<T>>::None`, but less wordy.
     ///
     /// To work with objects that can be null, use `Option<Gd<T>>` instead. For APIs that accept `Variant`, you can pass [`Variant::nil()`].
     ///
@@ -649,8 +649,8 @@ where
     ///
     /// let mut shape: Gd<Node> = some_node();
     /// shape.set_owner(Gd::null_arg());
-    pub fn null_arg() -> crate::obj::object_arg::ObjectNullArg<T> {
-        crate::obj::object_arg::ObjectNullArg(std::marker::PhantomData)
+    pub fn null_arg() -> impl crate::meta::AsObjectArg<T> {
+        crate::meta::ObjectNullArg(std::marker::PhantomData)
     }
 }
 
@@ -769,6 +769,49 @@ impl<T: GodotClass> ArrayElement for Gd<T> {
 impl<T: GodotClass> ArrayElement for Option<Gd<T>> {
     fn element_type_string() -> String {
         Gd::<T>::element_type_string()
+    }
+}
+
+impl<'r, T: GodotClass> AsArg<Gd<T>> for &'r Gd<T> {
+    fn into_arg<'cow>(self) -> CowArg<'cow, Gd<T>>
+    where
+        'r: 'cow, // Original reference must be valid for at least as long as the returned cow.
+    {
+        CowArg::Borrowed(self)
+    }
+}
+
+impl<T: GodotClass> ParamType for Gd<T> {
+    type Arg<'v> = CowArg<'v, Gd<T>>;
+
+    fn owned_to_arg<'v>(self) -> Self::Arg<'v> {
+        CowArg::Owned(self)
+    }
+
+    fn arg_to_ref<'r>(arg: &'r Self::Arg<'_>) -> &'r Self {
+        arg.cow_as_ref()
+    }
+}
+
+impl<'r, T: GodotClass> AsArg<Option<Gd<T>>> for Option<&'r Gd<T>> {
+    fn into_arg<'cow>(self) -> CowArg<'cow, Option<Gd<T>>> {
+        // TODO avoid cloning.
+        match self {
+            Some(gd) => CowArg::Owned(Some(gd.clone())),
+            None => CowArg::Owned(None),
+        }
+    }
+}
+
+impl<T: GodotClass> ParamType for Option<Gd<T>> {
+    type Arg<'v> = CowArg<'v, Option<Gd<T>>>;
+
+    fn owned_to_arg<'v>(self) -> Self::Arg<'v> {
+        CowArg::Owned(self)
+    }
+
+    fn arg_to_ref<'r>(arg: &'r Self::Arg<'_>) -> &'r Self {
+        arg.cow_as_ref()
     }
 }
 

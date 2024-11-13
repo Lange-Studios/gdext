@@ -119,7 +119,7 @@ fn object_subtype_swap_argument_passing(ctx: &TestContext) {
 
     let mut tree = ctx.scene_tree.clone();
     expect_panic("pass badly typed Gd<T> to Godot engine API", || {
-        tree.add_child(node);
+        tree.add_child(&node);
     });
 
     swapped_free!(obj, node2);
@@ -204,7 +204,7 @@ fn object_subtype_swap_func_return() {
         "returning badly typed Gd<T> from #[func] causes panic",
         || {
             // Call through Godot.
-            holder.call("return_swapped_node".into(), &[]);
+            holder.call("return_swapped_node", &[]);
         },
     );
 }
@@ -214,7 +214,7 @@ fn object_freed_func_return() {
     let mut holder = SwapHolder::new_gd();
     expect_panic("returning dead Gd<T> from #[func] causes panic", || {
         // Call through Godot.
-        let _dead = holder.call("add_dead_object_and_return".into(), &[]);
+        let _dead = holder.call("add_dead_object_and_return", &[]);
     }); // Destructor will not panic again (which would cause abort).
 }
 
@@ -255,7 +255,7 @@ impl SwapHolder {
         let mut node: Gd<Object> = Object::new_alloc();
         // Don't register with self.gc; already freed.
 
-        node.call("free".into(), &[]);
+        node.call("free", &[]);
         node
     }
 
@@ -264,7 +264,7 @@ impl SwapHolder {
         self.gc.push(node.clone());
 
         // Free already but still register with self.gc, to trigger 2nd error in destructor.
-        node.call("free".into(), &[]);
+        node.call("free", &[]);
         panic!("artificially trigger panic");
     }
 }

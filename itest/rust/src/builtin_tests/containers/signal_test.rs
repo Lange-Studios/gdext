@@ -5,7 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use godot::builtin::{Callable, GString, Signal, StringName, Variant};
+use godot::builtin::{Callable, GString, Signal, StringName};
 use godot::meta::ToGodot;
 use godot::register::{godot_api, GodotClass};
 use std::cell::Cell;
@@ -71,19 +71,16 @@ fn signals() {
 
     let args = [
         vec![],
-        vec![Variant::from(987)],
-        vec![
-            Variant::from(receiver.clone()),
-            Variant::from(SIGNAL_ARG_STRING),
-        ],
+        vec![987.to_variant()],
+        vec![receiver.to_variant(), SIGNAL_ARG_STRING.to_variant()],
     ];
 
     for (i, arg) in args.iter().enumerate() {
         let signal_name = format!("signal_{i}_arg");
         let receiver_name = format!("receive_{i}_arg");
 
-        emitter.connect(signal_name.clone().into(), receiver.callable(receiver_name));
-        emitter.emit_signal(signal_name.into(), arg);
+        emitter.connect(&signal_name, &receiver.callable(&receiver_name));
+        emitter.emit_signal(&signal_name, arg);
 
         assert!(receiver.bind().used[i].get());
     }
@@ -96,7 +93,7 @@ fn signals() {
 fn instantiate_signal() {
     let mut object = RefCounted::new_gd();
 
-    object.add_user_signal("test_signal".into());
+    object.add_user_signal("test_signal");
 
     let signal = Signal::from_object_signal(&object, "test_signal");
 
@@ -110,20 +107,18 @@ fn instantiate_signal() {
 fn emit_signal() {
     let mut object = RefCounted::new_gd();
 
-    object.add_user_signal("test_signal".into());
+    object.add_user_signal("test_signal");
 
     let signal = Signal::from_object_signal(&object, "test_signal");
     let receiver = Receiver::new_alloc();
 
     object.connect(
-        StringName::from("test_signal"),
-        Callable::from_object_method(&receiver, "receive_1_arg"),
+        &StringName::from("test_signal"), // explicit StringName
+        &Callable::from_object_method(&receiver, "receive_1_arg"),
     );
-
     assert_eq!(signal.connections().len(), 1);
 
     signal.emit(&[987i64.to_variant()]);
-
     assert!(receiver.bind().used[1].get());
 
     receiver.free();
@@ -133,17 +128,15 @@ fn emit_signal() {
 fn connect_signal() {
     let mut object = RefCounted::new_gd();
 
-    object.add_user_signal("test_signal".into());
+    object.add_user_signal("test_signal");
 
     let signal = Signal::from_object_signal(&object, "test_signal");
     let receiver = Receiver::new_alloc();
 
-    signal.connect(Callable::from_object_method(&receiver, "receive_1_arg"), 0);
-
+    signal.connect(&Callable::from_object_method(&receiver, "receive_1_arg"), 0);
     assert_eq!(signal.connections().len(), 1);
 
-    object.emit_signal(StringName::from("test_signal"), &[987i64.to_variant()]);
-
+    object.emit_signal("test_signal", &[987i64.to_variant()]);
     assert!(receiver.bind().used[1].get());
 
     receiver.free();
@@ -151,7 +144,7 @@ fn connect_signal() {
 
 #[cfg(since_api = "4.2")]
 mod custom_callable {
-    use godot::builtin::{Callable, Signal, StringName};
+    use godot::builtin::{Callable, Signal};
     use godot::meta::ToGodot;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -168,10 +161,10 @@ mod custom_callable {
             "test_signal",
             connect_signal_panic_from_fn,
             |node| {
-                node.add_user_signal("test_signal".into());
+                node.add_user_signal("test_signal");
             },
             |node| {
-                node.emit_signal(StringName::from("test_signal"), &[987i64.to_variant()]);
+                node.emit_signal("test_signal", &[987i64.to_variant()]);
             },
         );
     }
@@ -182,10 +175,10 @@ mod custom_callable {
             "test_signal",
             connect_signal_panic_from_custom,
             |node| {
-                node.add_user_signal("test_signal".into());
+                node.add_user_signal("test_signal");
             },
             |node| {
-                node.emit_signal(StringName::from("test_signal"), &[987i64.to_variant()]);
+                node.emit_signal("test_signal", &[987i64.to_variant()]);
             },
         );
     }
@@ -281,7 +274,7 @@ mod custom_callable {
 
         let received = Arc::new(AtomicU32::new(0));
         let callable = callable(received.clone());
-        signal.connect(callable, 0);
+        signal.connect(&callable, 0);
 
         emit(&mut node);
 

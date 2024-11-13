@@ -9,12 +9,14 @@ use crate::builtin::{Dictionary, StringName};
 use crate::classes::multiplayer_api::RpcMode;
 use crate::classes::multiplayer_peer::TransferMode;
 use crate::classes::Node;
-use crate::dict;
-use crate::meta::ToGodot;
+use crate::meta::{AsArg, ToGodot};
+use crate::{arg_into_ref, dict};
 
-/// Configuration for a remote procedure call, typically used with `#[rpc(config = ...)]`.
+/// Configuration for a remote procedure call, used with `#[rpc(config = ...)]`.
 ///
-/// See [Godot documentation](https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html#remote-procedure-calls).
+/// Check documentation of the [`#[rpc]` attribute](attr.godot_api.html#rpc-attributes) for usage.
+///
+/// See also [Godot `@rpc` keyword](https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html#remote-procedure-calls).
 #[derive(Copy, Clone, Debug)]
 pub struct RpcConfig {
     pub rpc_mode: RpcMode,
@@ -36,8 +38,9 @@ impl Default for RpcConfig {
 
 impl RpcConfig {
     /// Register `method` as a remote procedure call on `node`.
-    pub fn configure_node(self, node: &mut Node, method_name: impl Into<StringName>) {
-        node.rpc_config(method_name.into(), &self.to_dictionary().to_variant());
+    pub fn configure_node(self, node: &mut Node, method_name: impl AsArg<StringName>) {
+        arg_into_ref!(method_name);
+        node.rpc_config(method_name, &self.to_dictionary().to_variant());
     }
 
     /// Returns a [`Dictionary`] populated with the values required for a call to [`Node::rpc_config()`].

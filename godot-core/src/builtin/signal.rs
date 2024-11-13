@@ -13,6 +13,7 @@ use godot_ffi as sys;
 use crate::builtin::{inner, Array, Callable, Dictionary, StringName, Variant};
 use crate::classes::Object;
 use crate::global::Error;
+use crate::meta;
 use crate::meta::{FromGodot, GodotType, ToGodot};
 use crate::obj::bounds::DynMemory;
 use crate::obj::{Bounds, Gd, GodotClass, InstanceId};
@@ -40,9 +41,10 @@ impl Signal {
     pub fn from_object_signal<T, S>(object: &Gd<T>, signal_name: S) -> Self
     where
         T: GodotClass,
-        S: Into<StringName>,
+        S: meta::AsArg<StringName>,
     {
-        let signal_name = signal_name.into();
+        meta::arg_into_ref!(signal_name);
+
         unsafe {
             Self::new_with_uninit(|self_ptr| {
                 let ctor = sys::builtin_fn!(signal_from_object_signal);
@@ -74,7 +76,7 @@ impl Signal {
     /// returns [`Error::ERR_INVALID_PARAMETER`] and
     /// pushes an error message, unless the signal is connected with [`ConnectFlags::REFERENCE_COUNTED`](crate::classes::object::ConnectFlags::REFERENCE_COUNTED).
     /// To prevent this, use [`Self::is_connected`] first to check for existing connections.
-    pub fn connect(&self, callable: Callable, flags: i64) -> Error {
+    pub fn connect(&self, callable: &Callable, flags: i64) -> Error {
         let error = self.as_inner().connect(callable, flags);
 
         Error::from_godot(error as i32)
@@ -83,7 +85,7 @@ impl Signal {
     /// Disconnects this signal from the specified [`Callable`].
     ///
     /// If the connection does not exist, generates an error. Use [`Self::is_connected`] to make sure that the connection exists.
-    pub fn disconnect(&self, callable: Callable) {
+    pub fn disconnect(&self, callable: &Callable) {
         self.as_inner().disconnect(callable);
     }
 
@@ -95,7 +97,7 @@ impl Signal {
             return;
         };
 
-        object.emit_signal(self.name(), varargs);
+        object.emit_signal(&self.name(), varargs);
     }
 
     /// Returns an [`Array`] of connections for this signal.
@@ -142,7 +144,7 @@ impl Signal {
     }
 
     /// Returns `true` if the specified [`Callable`] is connected to this signal.
-    pub fn is_connected(&self, callable: Callable) -> bool {
+    pub fn is_connected(&self, callable: &Callable) -> bool {
         self.as_inner().is_connected(callable)
     }
 

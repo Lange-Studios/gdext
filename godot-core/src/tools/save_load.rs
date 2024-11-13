@@ -9,6 +9,7 @@ use crate::builtin::GString;
 use crate::classes::{Resource, ResourceLoader, ResourceSaver};
 use crate::global::Error as GodotError;
 use crate::meta::error::IoError;
+use crate::meta::{arg_into_ref, AsArg};
 use crate::obj::{Gd, Inherits};
 
 /// ⚠️ Loads a resource from the filesystem located at `path`, panicking on error.
@@ -26,12 +27,12 @@ use crate::obj::{Gd, Inherits};
 /// # Panics
 /// If the resource cannot be loaded, or is not of type `T` or inherited.
 #[inline]
-pub fn load<T>(path: impl Into<GString>) -> Gd<T>
+pub fn load<T>(path: impl AsArg<GString>) -> Gd<T>
 where
     T: Inherits<Resource>,
 {
-    let path = path.into();
-    load_impl(&path).unwrap_or_else(|err| panic!("failed: {err}"))
+    arg_into_ref!(path);
+    load_impl(path).unwrap_or_else(|err| panic!("failed to load resource at '{path}': {err}"))
 }
 
 /// Loads a resource from the filesystem located at `path`.
@@ -64,11 +65,12 @@ where
 /// }
 /// ```
 #[inline]
-pub fn try_load<T>(path: impl Into<GString>) -> Result<Gd<T>, IoError>
+pub fn try_load<T>(path: impl AsArg<GString>) -> Result<Gd<T>, IoError>
 where
     T: Inherits<Resource>,
 {
-    load_impl(&path.into())
+    arg_into_ref!(path);
+    load_impl(path)
 }
 
 /// ⚠️ Saves a [`Resource`]-inheriting object into the file located at `path`.
@@ -76,22 +78,24 @@ where
 /// See [`try_save`] for more information.
 ///
 /// # Panics
-/// If the resouce cannot be saved.
+/// If the resource cannot be saved.
 ///
 /// # Example
 /// ```no_run
 /// use godot::prelude::*;
 ///
-/// save(Resource::new_gd(), "res://BaseResource.tres")
+/// let obj = Resource::new_gd();
+/// save(&obj, "res://BaseResource.tres")
 /// ```
 /// use godot::
 #[inline]
-pub fn save<T>(obj: Gd<T>, path: impl Into<GString>)
+pub fn save<T>(obj: &Gd<T>, path: impl AsArg<GString>)
 where
     T: Inherits<Resource>,
 {
-    let path = path.into();
-    save_impl(obj, &path)
+    arg_into_ref!(path);
+
+    save_impl(obj, path)
         .unwrap_or_else(|err| panic!("failed to save resource at path '{}': {}", &path, err));
 }
 
@@ -117,16 +121,18 @@ where
 /// };
 ///
 /// let save_state = SavedGame::new_gd();
-/// let res = try_save(save_state, "user://save.tres");
+/// let res = try_save(&save_state, "user://save.tres");
 ///
 /// assert!(res.is_ok());
 /// ```
 #[inline]
-pub fn try_save<T>(obj: Gd<T>, path: impl Into<GString>) -> Result<(), IoError>
+pub fn try_save<T>(obj: &Gd<T>, path: impl AsArg<GString>) -> Result<(), IoError>
 where
     T: Inherits<Resource>,
 {
-    save_impl(obj, &path.into())
+    arg_into_ref!(path);
+
+    save_impl(obj, path)
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -138,12 +144,12 @@ fn load_impl<T>(path: &GString) -> Result<Gd<T>, IoError>
 where
     T: Inherits<Resource>,
 {
-    // TODO unclone GString
-    match ResourceLoader::singleton()
-        .load_ex(path.clone())
-        .type_hint(T::class_name().to_gstring())
-        .done()
-    {
+    let loaded = ResourceLoader::singleton()
+        .load_ex(path)
+        .type_hint(&T::class_name().to_gstring())
+        .done();
+
+    match loaded {
         Some(res) => match res.try_cast::<T>() {
             Ok(obj) => Ok(obj),
             Err(_) => Err(IoError::loading_cast(
@@ -158,22 +164,19 @@ where
     }
 }
 
-fn save_impl<T>(obj: Gd<T>, path: &GString) -> Result<(), IoError>
+fn save_impl<T>(obj: &Gd<T>, path: &GString) -> Result<(), IoError>
 where
     T: Inherits<Resource>,
 {
-    // TODO unclone GString
-    let res = ResourceSaver::singleton()
-        .save_ex(obj)
-        .path(path.clone())
-        .done();
+    let res = ResourceSaver::singleton().save_ex(obj).path(path).done();
 
     if res == GodotError::OK {
-        return Ok(());
+        Ok(())
+    } else {
+        Err(IoError::saving(
+            res,
+            T::class_name().to_string(),
+            path.to_string(),
+        ))
     }
-    Err(IoError::saving(
-        res,
-        T::class_name().to_string(),
-        path.to_string(),
-    ))
 }

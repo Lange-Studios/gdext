@@ -8,23 +8,47 @@
 use crate::builtin::Variant;
 use crate::meta::error::ConvertError;
 use crate::meta::{ClassName, FromGodot, GodotConvert, GodotFfiVariant, GodotType, ToGodot};
-use crate::obj::{bounds, raw_gd, Bounds, Gd, GodotClass, Inherits, RawGd};
-use crate::sys;
+use crate::obj::{bounds, Bounds, Gd, GodotClass, Inherits, RawGd};
+use crate::{obj, sys};
 use godot_ffi::{GodotFfi, GodotNullableFfi, PtrcallType};
 use std::ptr;
 
 /// Objects that can be passed as arguments to Godot engine functions.
 ///
-/// This trait is implemented for the following types:
-/// - [`Gd<T>`] and `&Gd<T>`, to pass objects. Subclasses of `T` are explicitly supported.
-/// - [`Option<Gd<T>>`] and `Option<&Gd<T>>`, to pass optional objects. `None` is mapped to a null argument.
+/// This trait is implemented for **shared references** in multiple ways:
+/// - [`&Gd<T>`][crate::obj::Gd]  to pass objects. Subclasses of `T` are explicitly supported.
+/// - [`Option<&Gd<T>>`][Option], to pass optional objects. `None` is mapped to a null argument.
 /// - [`Gd::null_arg()`], to pass `null` arguments without using `Option`.
+///
+/// Note that [`AsObjectArg`] is very similar to the more general [`AsArg`][crate::meta::AsArg] trait. The two may be merged in the future.
 ///
 /// # Nullability
 /// <div class="warning">
 /// The GDExtension API does not inform about nullability of its function parameters. It is up to you to verify that the arguments you pass
 /// are only null when this is allowed. Doing this wrong should be safe, but can lead to the function call failing.
 /// </div>
+///
+/// # Different argument types
+/// Currently, the trait requires pass-by-ref, which helps detect accidental cloning when interfacing with Godot APIs. Plus, it is more
+/// consistent with the [`AsArg`][crate::meta::AsArg] trait (for strings, but also `AsArg<Gd<T>>` as used in
+/// [`Array::push()`][crate::builtin::Array::push] and similar methods).
+///
+/// The following table lists the possible argument types and how you can pass them. `Gd` is short for `Gd<T>`.
+///
+/// | Type              | Closest accepted type | How to transform |
+/// |-------------------|-----------------------|------------------|
+/// | `Gd`              | `&Gd`                 | `&arg`           |
+/// | `&Gd`             | `&Gd`                 | `arg`            |
+/// | `&mut Gd`         | `&Gd`                 | `&*arg`          |
+/// | `Option<Gd>`      | `Option<&Gd>`         | `arg.as_ref()`   |
+/// | `Option<&Gd>`     | `Option<&Gd>`         | `arg`            |
+/// | `Option<&mut Gd>` | `Option<&Gd>`         | `arg.as_deref()` |
+/// | (null literal)    |                       | `Gd::null_arg()` |
+#[diagnostic::on_unimplemented(
+    message = "Argument of type `{Self}` cannot be passed to an `impl AsObjectArg<{T}>` parameter",
+    note = "If you pass by value, consider borrowing instead.",
+    note = "See also `AsObjectArg` docs: https://godot-rust.github.io/docs/gdext/master/godot/meta/trait.AsObjectArg.html"
+)]
 pub trait AsObjectArg<T>
 where
     T: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
@@ -34,8 +58,14 @@ where
 
     /// Returns
     #[doc(hidden)]
-    fn consume_object(self) -> ObjectCow<T>;
+    fn consume_arg(self) -> ObjectCow<T>;
 }
+
+/*
+Currently not implemented for values, to be consistent with AsArg for by-ref builtins. The idea is that this can discover patterns like
+api.method(refc.clone()), and encourage better performance with api.method(&refc). However, we need to see if there's a notable ergonomic
+impact, and consider that for nodes, Gd<T> copies are relatively cheap (no ref-counting). There is also some value in prematurely ending
+the lifetime of a Gd<T> by moving out, so it's not accidentally used later.
 
 impl<T, U> AsObjectArg<T> for Gd<U>
 where
@@ -46,10 +76,11 @@ where
         <&Gd<U>>::as_object_arg(&self)
     }
 
-    fn consume_object(self) -> ObjectCow<T> {
+    fn consume_arg(self) -> ObjectCow<T> {
         ObjectCow::Owned(self.upcast())
     }
 }
+*/
 
 impl<T, U> AsObjectArg<T> for &Gd<U>
 where
@@ -62,24 +93,8 @@ where
         unsafe { ObjectArg::from_raw_gd(&self.raw) }
     }
 
-    fn consume_object(self) -> ObjectCow<T> {
+    fn consume_arg(self) -> ObjectCow<T> {
         ObjectCow::Borrowed(self.as_object_arg())
-    }
-}
-
-impl<T, U> AsObjectArg<T> for &mut Gd<U>
-where
-    T: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
-    U: Inherits<T>,
-{
-    // Delegate to &Gd impl.
-
-    fn as_object_arg(&self) -> ObjectArg<T> {
-        <&Gd<U>>::as_object_arg(&&**self)
-    }
-
-    fn consume_object(self) -> ObjectCow<T> {
-        <&Gd<U>>::consume_object(&*self)
     }
 }
 
@@ -93,13 +108,44 @@ where
             .map_or_else(ObjectArg::null, AsObjectArg::as_object_arg)
     }
 
-    fn consume_object(self) -> ObjectCow<T> {
+    fn consume_arg(self) -> ObjectCow<T> {
         match self {
-            Some(obj) => obj.consume_object(),
-            None => Gd::null_arg().consume_object(),
+            Some(obj) => obj.consume_arg(),
+            None => Gd::null_arg().consume_arg(),
         }
     }
 }
+
+/*
+It's relatively common that Godot APIs return `Option<Gd<T>>` or pass this type in virtual functions. To avoid excessive `as_ref()` calls, we
+**could** directly support `&Option<Gd>` in addition to `Option<&Gd>`. However, this is currently not done as it hides nullability,
+especially in situations where a return type is directly propagated:
+    api(create_obj().as_ref())
+    api(&create_obj())
+While the first is slightly longer, it looks different from a function create_obj() that returns Gd<T> and thus can never be null.
+In some scenarios, it's better to immediately ensure non-null (e.g. through `unwrap()`) instead of propagating nulls to the engine.
+It's also quite idiomatic to use as_ref() for inner-option transforms in Rust.
+
+impl<T, U> AsObjectArg<T> for &Option<U>
+where
+    T: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
+    for<'a> &'a U: AsObjectArg<T>,
+{
+    fn as_object_arg(&self) -> ObjectArg<T> {
+        match self {
+            Some(obj) => obj.as_object_arg(),
+            None => ObjectArg::null(),
+        }
+    }
+
+    fn consume_arg(self) -> ObjectCow<T> {
+        match self {
+            Some(obj) => obj.consume_arg(),
+            None => Gd::null_arg().consume_arg(),
+        }
+    }
+}
+*/
 
 impl<T> AsObjectArg<T> for ObjectNullArg<T>
 where
@@ -109,7 +155,7 @@ where
         ObjectArg::null()
     }
 
-    fn consume_object(self) -> ObjectCow<T> {
+    fn consume_arg(self) -> ObjectCow<T> {
         // Null pointer is safe to borrow.
         ObjectCow::Borrowed(ObjectArg::null())
     }
@@ -135,8 +181,8 @@ where
 {
     /// Returns the actual `ObjectArg` to be passed to function calls.
     ///
-    /// [`ObjectCow`] does not implement [`AsObjectArg<T>`] because a differently-named method is more explicit (less errors in codegen),
-    /// and because [`AsObjectArg::consume_object()`] is not meaningful.
+    /// [`ObjectCow`] does not implement [`AsObjectArg<T>`] because a differently-named method is more explicit (fewer errors in codegen),
+    /// and because [`AsObjectArg::consume_arg()`] is not meaningful.
     pub fn cow_as_object_arg(&self) -> ObjectArg<T> {
         match self {
             ObjectCow::Owned(gd) => gd.as_object_arg(),
@@ -237,7 +283,7 @@ where
     // https://github.com/godotengine/godot-cpp/issues/954
 
     fn as_arg_ptr(&self) -> sys::GDExtensionConstTypePtr {
-        raw_gd::object_as_arg_ptr(&self.object_ptr)
+        obj::object_as_arg_ptr(&self.object_ptr)
     }
 
     unsafe fn from_arg_ptr(_ptr: sys::GDExtensionTypePtr, _call_type: PtrcallType) -> Self {
@@ -297,7 +343,7 @@ impl<T: GodotClass> GodotType for ObjectArg<T> {
 impl<T: GodotClass> GodotFfiVariant for ObjectArg<T> {
     fn ffi_to_variant(&self) -> Variant {
         // Note: currently likely not invoked since there are no known varcall APIs taking Object parameters; however this might change.
-        raw_gd::object_ffi_to_variant(self)
+        obj::object_ffi_to_variant(self)
     }
 
     fn ffi_from_variant(_variant: &Variant) -> Result<Self, ConvertError> {

@@ -46,15 +46,15 @@ impl Callable {
     pub fn from_object_method<T, S>(object: &Gd<T>, method_name: S) -> Self
     where
         T: GodotClass, // + Inherits<Object>,
-        S: Into<StringName>,
+        S: meta::AsArg<StringName>,
     {
-        // upcast not needed
-        let method = method_name.into();
+        meta::arg_into_ref!(method_name);
+
         unsafe {
             Self::new_with_uninit(|self_ptr| {
                 let ctor = sys::builtin_fn!(callable_from_object_method);
                 let raw = object.to_ffi();
-                let args = [raw.as_arg_ptr(), method.sys()];
+                let args = [raw.as_arg_ptr(), method_name.sys()];
                 ctor(self_ptr, args.as_ptr());
             })
         }
@@ -185,7 +185,7 @@ impl Callable {
     }
 
     /// Returns the name of the method represented by this callable. If the callable is a lambda function,
-    /// returns the function's name.
+    /// returns the surrounding function's name.
     ///
     /// ## Known Bugs
     ///
@@ -340,6 +340,7 @@ impl fmt::Display for Callable {
 #[cfg(since_api = "4.2")]
 use custom_callable::*;
 
+use crate::meta;
 #[cfg(since_api = "4.2")]
 pub use custom_callable::RustCallable;
 

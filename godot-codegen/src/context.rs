@@ -7,7 +7,7 @@
 
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::notifications;
-use crate::models::domain::{GodotTy, RustTy, TyName};
+use crate::models::domain::{ArgPassing, GodotTy, RustTy, TyName};
 use crate::models::json::{
     JsonBuiltinClass, JsonBuiltinMethod, JsonClass, JsonClassConstant, JsonClassMethod,
 };
@@ -243,10 +243,19 @@ impl<'a> Context<'a> {
         self.builtin_types.contains(ty_name)
     }
 
-    pub fn is_builtin_copy(&self, ty_name: &str) -> bool {
-        debug_assert!(!ty_name.starts_with("Packed")); // Already handled separately.
+    pub fn get_builtin_arg_passing(&self, godot_ty: &GodotTy) -> ArgPassing {
+        // Already handled separately.
+        debug_assert!(!godot_ty.ty.starts_with("Packed"));
 
-        !matches!(ty_name, "Variant" | "VariantArray" | "Dictionary")
+        // IMPORTANT: Keep this in sync with impl_ffi_variant!() macros taking `ref` or not.
+
+        // Arrays are also handled separately, and use ByRef.
+        match godot_ty.ty.as_str() {
+            // Note: Signal is currently not used in any parameter, but this may change.
+            "Variant" | "Array" | "Dictionary" | "Callable" | "Signal" => ArgPassing::ByRef,
+            "String" | "StringName" | "NodePath" => ArgPassing::ImplAsArg,
+            _ => ArgPassing::ByValue,
+        }
     }
 
     pub fn is_native_structure(&self, ty_name: &str) -> bool {
