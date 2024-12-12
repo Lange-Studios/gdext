@@ -12,8 +12,9 @@ use crate::builtin::*;
 use crate::meta;
 use crate::meta::error::{ConvertError, FromGodotError, FromVariantError};
 use crate::meta::{
-    ArrayElement, ArrayTypeInfo, AsArg, CowArg, FromGodot, GodotConvert, GodotFfiVariant,
-    GodotType, ParamType, PropertyHintInfo, RefArg, ToGodot,
+    element_godot_type_name, element_variant_type, ArrayElement, ArrayTypeInfo, AsArg, CowArg,
+    FromGodot, GodotConvert, GodotFfiVariant, GodotType, ParamType, PropertyHintInfo, RefArg,
+    ToGodot,
 };
 use crate::registry::property::{Export, Var};
 use godot_ffi as sys;
@@ -107,6 +108,22 @@ use sys::{ffi_methods, interface_fn, GodotFfi};
 /// different threads are also safe, but any writes must be externally synchronized. The Rust
 /// compiler will enforce this as long as you use only Rust threads, but it cannot protect against
 /// concurrent modification on other threads (e.g. created through GDScript).
+///
+/// # Element type safety
+///
+/// We provide a richer set of element types than Godot, for convenience and stronger invariants in your _Rust_ code.
+/// This, however, means that the Godot representation of such arrays is not capable of incorporating the additional "Rust-side" information.
+/// This can lead to situations where GDScript code or the editor UI can insert values that do not fulfill the Rust-side invariants.
+/// The library offers some best-effort protection in Debug mode, but certain errors may only occur on element access, in the form of panics.
+///
+/// Concretely, the following types lose type information when passed to Godot. If you want 100% bullet-proof arrays, avoid those.
+/// - Non-`i64` integers: `i8`, `i16`, `i32`, `u8`, `u16`, `u32`. (`u64` is unsupported).
+/// - Non-`f64` floats: `f32`.
+/// - Non-null objects: [`Gd<T>`][crate::obj::Gd].
+///   Godot generally allows `null` in arrays due to default-constructability, e.g. when using `resize()`.
+///   The Godot-faithful (but less convenient) alternative is to use `Option<Gd<T>>` element types.
+/// - Objects with dyn-trait association: [`DynGd<T, D>`][crate::obj::DynGd].
+///   Godot doesn't know Rust traits and will only see the `T` part.
 ///
 /// # Godot docs
 ///
@@ -886,8 +903,14 @@ impl<T: ArrayElement> Array<T> {
     /// Used as `if` statement in trait impls. Avoids defining yet another trait or non-local overridden function just for this case;
     /// `Variant` is the only Godot type that has variant type NIL and can be used as an array element.
     fn has_variant_t() -> bool {
-        T::Ffi::variant_type() == VariantType::NIL
+        element_variant_type::<T>() == VariantType::NIL
     }
+}
+
+#[test]
+fn correct_variant_t() {
+    assert!(Array::<Variant>::has_variant_t());
+    assert!(!Array::<i64>::has_variant_t());
 }
 
 impl VariantArray {
@@ -1102,8 +1125,10 @@ impl<T: ArrayElement> Drop for Array<T> {
 impl<T: ArrayElement> GodotType for Array<T> {
     type Ffi = Self;
 
-    type ToFfi<'f> = RefArg<'f, Array<T>>
-    where Self: 'f;
+    type ToFfi<'f>
+        = RefArg<'f, Array<T>>
+    where
+        Self: 'f;
 
     fn to_ffi(&self) -> Self::ToFfi<'_> {
         RefArg::new(self)
@@ -1131,7 +1156,7 @@ impl<T: ArrayElement> GodotType for Array<T> {
         // Typed arrays use type hint.
         PropertyHintInfo {
             hint: crate::global::PropertyHint::ARRAY_TYPE,
-            hint_string: T::godot_type_name().into(),
+            hint_string: GString::from(element_godot_type_name::<T>()),
         }
     }
 }
@@ -1250,7 +1275,7 @@ pub struct Iter<'a, T: ArrayElement> {
     next_idx: usize,
 }
 
-impl<'a, T: ArrayElement + FromGodot> Iterator for Iter<'a, T> {
+impl<T: ArrayElement + FromGodot> Iterator for Iter<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -21,7 +21,6 @@ mod util;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
 
 use crate::util::{bail, ident, KvParser};
 
@@ -149,7 +148,8 @@ use crate::util::{bail, ident, KvParser};
 /// [properties](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_basics.html#properties-setters-and-getters)
 /// (fields with a `get` or `set` declaration) and
 /// [exports](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_exports.html)
-/// (fields annotated with `@export`). In the gdext API, these two concepts are represented with `#[var]` and `#[export]` attributes respectively.
+/// (fields annotated with `@export`). In the gdext API, these two concepts are represented with `#[var]` and `#[export]` attributes respectively,
+/// which in turn are backed by the [`Var`](../register/property/trait.Var.html) and [`Export`](../register/property/trait.Export.html) traits.
 ///
 /// ## Property registration
 ///
@@ -475,7 +475,17 @@ use crate::util::{bail, ident, KvParser};
 ///     }
 /// }
 /// ```
-#[proc_macro_derive(GodotClass, attributes(class, base, hint, var, export, init, signal))]
+#[doc(
+    alias = "class",
+    alias = "base",
+    alias = "init",
+    alias = "no_init",
+    alias = "var",
+    alias = "export",
+    alias = "tool",
+    alias = "rename"
+)]
+#[proc_macro_derive(GodotClass, attributes(class, base, hint, var, export, init))]
 pub fn derive_godot_class(input: TokenStream) -> TokenStream {
     translate(input, class::derive_godot_class)
 }
@@ -520,6 +530,7 @@ pub fn derive_godot_class(input: TokenStream) -> TokenStream {
 ///   - [Virtual methods](#virtual-methods)
 ///   - [RPC attributes](#rpc-attributes)
 /// - [Constants and signals](#signals)
+/// - [Multiple inherent `impl` blocks](#multiple-inherent-impl-blocks)
 ///
 /// # Constructors
 ///
@@ -749,14 +760,96 @@ pub fn derive_godot_class(input: TokenStream) -> TokenStream {
 /// # Constants and signals
 ///
 /// Please refer to [the book](https://godot-rust.github.io/book/register/constants.html).
+///
+/// # Multiple inherent `impl` blocks
+///
+/// Just like with regular structs, you can have multiple inherent `impl` blocks. This can be useful for code organization or when you want to generate code from a proc-macro.
+/// For implementation reasons, all but one `impl` blocks must have the key `secondary`. There is no difference between implementing all functions in one block or splitting them up between multiple blocks.
+/// ```no_run
+/// # use godot::prelude::*;
+/// # #[derive(GodotClass)]
+/// # #[class(init)]
+/// # struct MyStruct {
+/// #     base: Base<RefCounted>,
+/// # }
+/// #[godot_api]
+/// impl MyStruct {
+///     #[func]
+///     pub fn one(&self) { }
+/// }
+///
+/// #[godot_api(secondary)]
+/// impl MyStruct {
+///     #[func]
+///     pub fn two(&self) { }
+/// }
+/// ```
+#[doc(
+    alias = "func",
+    alias = "rpc",
+    alias = "virtual",
+    alias = "signal",
+    alias = "constant",
+    alias = "rename",
+    alias = "secondary"
+)]
 #[proc_macro_attribute]
-pub fn godot_api(_meta: TokenStream, input: TokenStream) -> TokenStream {
-    translate(input, class::attribute_godot_api)
+pub fn godot_api(meta: TokenStream, input: TokenStream) -> TokenStream {
+    translate(input, |body| {
+        class::attribute_godot_api(TokenStream2::from(meta), body)
+    })
 }
 
-/// Derive macro for [`GodotConvert`](../builtin/meta/trait.GodotConvert.html) on structs.
+/// Generates a `Class` -> `dyn Trait` upcasting relation.
 ///
-/// This derive macro also derives [`ToGodot`](../builtin/meta/trait.ToGodot.html) and [`FromGodot`](../builtin/meta/trait.FromGodot.html).
+/// This attribute macro can be applied to `impl MyTrait for MyClass` blocks, where `MyClass` is a `GodotClass`. It will automatically
+/// implement [`MyClass: AsDyn<dyn MyTrait>`](../obj/trait.AsDyn.html) for you.
+///
+/// Establishing this relation allows godot-rust to upcast `MyGodotClass` to `dyn Trait` inside the library's
+/// [`DynGd`](../obj/struct.DynGd.html) smart pointer.
+///
+/// # Code generation
+/// Given the following code,
+/// ```no_run
+/// use godot::prelude::*;
+///
+/// #[derive(GodotClass)]
+/// #[class(init)]
+/// struct MyClass {}
+///
+/// trait MyTrait {}
+///
+/// #[godot_dyn]
+/// impl MyTrait for MyClass {}
+/// ```
+/// the macro expands to:
+/// ```no_run
+/// # use godot::prelude::*;
+/// # #[derive(GodotClass)]
+/// # #[class(init)]
+/// # struct MyClass {}
+/// # trait MyTrait {}
+/// // impl block remains unchanged...
+/// impl MyTrait for MyClass {}
+///
+/// // ...but a new `impl AsDyn` is added.
+/// impl AsDyn<dyn MyTrait> for MyClass {
+///     fn dyn_upcast(&self) -> &(dyn MyTrait + 'static) { self }
+///     fn dyn_upcast_mut(&mut self) -> &mut (dyn MyTrait + 'static) { self }
+/// }
+/// ```
+///
+/// # Orphan rule limitations
+/// Since `AsDyn` is always a foreign trait, the `#[godot_dyn]` attribute must be used in the same crate as the Godot class's definition.
+/// (Currently, Godot classes cannot be shared from libraries, but this may [change in the future](https://github.com/godot-rust/gdext/issues/951).)
+#[proc_macro_attribute]
+pub fn godot_dyn(_meta: TokenStream, input: TokenStream) -> TokenStream {
+    translate(input, class::attribute_godot_dyn)
+}
+
+/// Derive macro for [`GodotConvert`](../meta/trait.GodotConvert.html) on structs.
+///
+/// This derive macro also derives [`ToGodot`](../meta/trait.ToGodot.html) and [`FromGodot`](../meta/trait.FromGodot.html).
 ///
 /// # Choosing a Via type
 ///
@@ -887,7 +980,7 @@ pub fn derive_godot_convert(input: TokenStream) -> TokenStream {
 
 /// Derive macro for [`Var`](../register/property/trait.Var.html) on enums.
 ///
-/// This expects a derived [`GodotConvert`](../builtin/meta/trait.GodotConvert.html) implementation, using a manual
+/// This expects a derived [`GodotConvert`](../meta/trait.GodotConvert.html) implementation, using a manual
 /// implementation of `GodotConvert` may lead to incorrect values being displayed in Godot.
 #[proc_macro_derive(Var, attributes(godot))]
 pub fn derive_var(input: TokenStream) -> TokenStream {
@@ -961,13 +1054,7 @@ where
     let input2 = TokenStream2::from(input);
     let meta2 = TokenStream2::from(meta);
 
-    // Hack because venial doesn't support direct meta parsing yet
-    let input = quote! {
-        #[#self_name(#meta2)]
-        #input2
-    };
-
-    let result2 = venial::parse_item(input)
+    let result2 = util::venial_parse_meta(&meta2, self_name, &input2)
         .and_then(transform)
         .unwrap_or_else(|e| e.to_compile_error());
 

@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+
 use crate::class::{
     into_signature_info, make_constant_registration, make_method_registration,
     make_signal_registrations, ConstDefinition, FuncDefinition, RpcAttr, RpcMode, SignalDefinition,
@@ -64,14 +65,23 @@ struct FuncAttr {
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
+pub struct InherentImplAttr {
+    /// For implementation reasons, there can be a single 'primary' impl block and 0 or more 'secondary' impl blocks.
+    /// For now, this is controlled by a key in the 'godot_api' attribute.
+    pub secondary: bool,
+}
+
 /// Codegen for `#[godot_api] impl MyType`
-pub fn transform_inherent_impl(mut impl_block: venial::Impl) -> ParseResult<TokenStream> {
+pub fn transform_inherent_impl(
+    meta: InherentImplAttr,
+    mut impl_block: venial::Impl,
+) -> ParseResult<TokenStream> {
     let class_name = util::validate_impl(&impl_block, None, "godot_api")?;
     let class_name_obj = util::class_name_obj(&class_name);
     let prv = quote! { ::godot::private };
 
     // Can add extra functions to the end of the impl block.
-    let (funcs, signals) = process_godot_fns(&class_name, &mut impl_block)?;
+    let (funcs, signals) = process_godot_fns(&class_name, &mut impl_block, meta.secondary)?;
     let consts = process_godot_constants(&mut impl_block)?;
 
     #[cfg(all(feature = "register-docs", since_api = "4.3"))]
@@ -93,43 +103,97 @@ pub fn transform_inherent_impl(mut impl_block: venial::Impl) -> ParseResult<Toke
 
     let constant_registration = make_constant_registration(consts, &class_name, &class_name_obj)?;
 
-    let result = quote! {
-        #impl_block
+    let method_storage_name = format_ident!("__registration_methods_{class_name}");
+    let constants_storage_name = format_ident!("__registration_constants_{class_name}");
 
-        impl ::godot::obj::cap::ImplementsGodotApi for #class_name {
-            fn __register_methods() {
+    let fill_storage = quote! {
+        ::godot::sys::plugin_execute_pre_main!({
+            #method_storage_name.lock().unwrap().push(|| {
                 #( #method_registrations )*
                 #( #signal_registrations )*
-            }
+            });
 
-            fn __register_constants() {
+            #constants_storage_name.lock().unwrap().push(|| {
                 #constant_registration
-            }
-
-            #rpc_registrations
-        }
-
-        ::godot::sys::plugin_add!(__GODOT_PLUGIN_REGISTRY in #prv; #prv::ClassPlugin {
-            class_name: #class_name_obj,
-            item: #prv::PluginItem::InherentImpl(#prv::InherentImpl {
-                register_methods_constants_fn: #prv::ErasedRegisterFn {
-                    raw: #prv::callbacks::register_user_methods_constants::<#class_name>,
-                },
-                register_rpcs_fn: Some(#prv::ErasedRegisterRpcsFn {
-                    raw: #prv::callbacks::register_user_rpcs::<#class_name>,
-                }),
-                #docs
-            }),
-            init_level: <#class_name as ::godot::obj::GodotClass>::INIT_LEVEL,
+            });
         });
     };
 
-    Ok(result)
+    if !meta.secondary {
+        // We are the primary `impl` block.
+
+        let storage = quote! {
+            #[allow(non_upper_case_globals)]
+            #[doc(hidden)]
+            static #method_storage_name: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
+
+            #[allow(non_upper_case_globals)]
+            #[doc(hidden)]
+            static #constants_storage_name: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
+        };
+
+        let trait_impl = quote! {
+            impl ::godot::obj::cap::ImplementsGodotApi for #class_name {
+                fn __register_methods() {
+                    let guard = #method_storage_name.lock().unwrap();
+                    for f in guard.iter() {
+                        f();
+                    }
+                }
+
+                fn __register_constants() {
+                    let guard = #constants_storage_name.lock().unwrap();
+                    for f in guard.iter() {
+                        f();
+                    }
+                }
+
+                #rpc_registrations
+            }
+        };
+
+        let class_registration = quote! {
+            ::godot::sys::plugin_add!(__GODOT_PLUGIN_REGISTRY in #prv; #prv::ClassPlugin {
+                class_name: #class_name_obj,
+                item: #prv::PluginItem::InherentImpl(#prv::InherentImpl {
+                    register_methods_constants_fn: #prv::ErasedRegisterFn {
+                        raw: #prv::callbacks::register_user_methods_constants::<#class_name>,
+                    },
+                    register_rpcs_fn: Some(#prv::ErasedRegisterRpcsFn {
+                        raw: #prv::callbacks::register_user_rpcs::<#class_name>,
+                    }),
+                    #docs
+                }),
+                init_level: <#class_name as ::godot::obj::GodotClass>::INIT_LEVEL,
+            });
+        };
+
+        let result = quote! {
+            #impl_block
+            #storage
+            #trait_impl
+            #fill_storage
+            #class_registration
+        };
+
+        Ok(result)
+    } else {
+        // We are in a secondary `impl` block, so most of the work has already been done,
+        // and we just need to add our registration functions in the storage defined by the primary `impl` block.
+
+        let result = quote! {
+            #impl_block
+            #fill_storage
+        };
+
+        Ok(result)
+    }
 }
 
 fn process_godot_fns(
     class_name: &Ident,
     impl_block: &mut venial::Impl,
+    is_secondary_impl: bool,
 ) -> ParseResult<(Vec<FuncDefinition>, Vec<SignalDefinition>)> {
     let mut func_definitions = vec![];
     let mut signal_definitions = vec![];
@@ -219,9 +283,16 @@ fn process_godot_fns(
                     rpc_info,
                 });
             }
+
             ItemAttrType::Signal(ref _attr_val) => {
+                if is_secondary_impl {
+                    return attr.bail(
+                        "#[signal] is not currently supported in secondary impl blocks",
+                        function,
+                    );
+                }
                 if function.return_ty.is_some() {
-                    return attr.bail("return types are not supported", function);
+                    return attr.bail("return types in #[signal] are not supported", function);
                 }
 
                 let external_attributes = function.attributes.clone();
@@ -234,6 +305,7 @@ fn process_godot_fns(
 
                 removed_indexes.push(index);
             }
+
             ItemAttrType::Const(_) => {
                 return attr.bail(
                     "#[constant] can only be used on associated constant",
@@ -474,12 +546,7 @@ where
             }
 
             // #[signal]
-            name if name == "signal" => {
-                // TODO once parameters are supported, this should probably be moved to the struct definition
-                // E.g. a zero-sized type Signal<(i32, String)> with a provided emit(i32, String) method
-                // This could even be made public (callable on the struct obj itself)
-                AttrParseResult::Signal(attr.value.clone())
-            }
+            name if name == "signal" => AttrParseResult::Signal(attr.value.clone()),
 
             // #[constant]
             name if name == "constant" => AttrParseResult::Const(attr.value.clone()),

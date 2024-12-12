@@ -242,6 +242,7 @@ impl<T: GodotClass> RawGd<T> {
         // pub struct RawGd<T: GodotClass> {
         //     obj: *mut T,
         //     cached_rtti: Option<ObjectRtti>,
+        //     cached_storage_ptr: InstanceCache, // ZST for engine classes.
         // }
         //
         // The pointers have the same meaning despite different types, and so the whole struct is layout-compatible.
@@ -544,8 +545,10 @@ impl<T: GodotClass> FromGodot for RawGd<T> {
 impl<T: GodotClass> GodotType for RawGd<T> {
     type Ffi = Self;
 
-    type ToFfi<'f> = RefArg<'f, RawGd<T>>
-    where Self: 'f;
+    type ToFfi<'f>
+        = RefArg<'f, RawGd<T>>
+    where
+        Self: 'f;
 
     fn to_ffi(&self) -> Self::ToFfi<'_> {
         RefArg::new(self)

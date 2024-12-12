@@ -107,7 +107,7 @@
 //! * **`codegen-rustfmt`**
 //!
 //!   Use rustfmt to format generated binding code. Because rustfmt is so slow, this is detrimental to initial compile time.
-//!   Without it, we use a lightweight and fast custom formatter to enable basic human readability.
+//!   Without it, we use a lightweight and fast custom formatter to enable basic human readability.<br><br>
 //!
 //! * **`register-docs`**
 //!
@@ -175,7 +175,7 @@ pub mod init {
 /// Register/export Rust symbols to Godot: classes, methods, enums...
 pub mod register {
     pub use godot_core::registry::property;
-    pub use godot_macros::{godot_api, Export, GodotClass, GodotConvert, Var};
+    pub use godot_macros::{godot_api, godot_dyn, Export, GodotClass, GodotConvert, Var};
 
     #[cfg(feature = "__codegen-full")]
     pub use godot_core::registry::RpcConfig;

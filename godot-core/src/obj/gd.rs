@@ -9,8 +9,7 @@ use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::{Deref, DerefMut};
 
 use godot_ffi as sys;
-
-use sys::{static_assert_eq_size_align, VariantType};
+use sys::{static_assert_eq_size_align, SysPtr as _, VariantType};
 
 use crate::builtin::{Callable, NodePath, StringName, Variant};
 use crate::global::PropertyHint;
@@ -20,8 +19,8 @@ use crate::meta::{
     ParamType, PropertyHintInfo, RefArg, ToGodot,
 };
 use crate::obj::{
-    bounds, cap, Bounds, EngineEnum, GdDerefTarget, GdMut, GdRef, GodotClass, Inherits, InstanceId,
-    RawGd,
+    bounds, cap, Bounds, DynGd, EngineEnum, GdDerefTarget, GdMut, GdRef, GodotClass, Inherits,
+    InstanceId, RawGd,
 };
 use crate::private::callbacks;
 use crate::registry::property::{Export, Var};
@@ -278,6 +277,27 @@ impl<T: GodotClass> Gd<T> {
         self.raw.is_instance_valid()
     }
 
+    /// Returns the dynamic class name of the object as `StringName`.
+    ///
+    /// This method retrieves the class name of the object at runtime, which can be different from [`T::class_name()`] if derived
+    /// classes are involved.
+    ///
+    /// Unlike [`Object::get_class()`], this returns `StringName` instead of `GString` and needs no `Inherits<Object>` bound.
+    pub(crate) fn dynamic_class_string(&self) -> StringName {
+        unsafe {
+            StringName::new_with_string_uninit(|ptr| {
+                let success = sys::interface_fn!(object_get_class_name)(
+                    self.obj_sys().as_const(),
+                    sys::get_library(),
+                    ptr,
+                );
+
+                let success = sys::conv::bool_from_sys(success);
+                assert!(success, "failed to get class name for object {self:?}");
+            })
+        }
+    }
+
     /// **Upcast:** convert into a smart pointer to a base class. Always succeeds.
     ///
     /// Moves out of this value. If you want to create _another_ smart pointer instance,
@@ -298,6 +318,13 @@ impl<T: GodotClass> Gd<T> {
     {
         self.owned_cast()
             .expect("Upcast failed. This is a bug; please report it.")
+    }
+
+    /// Equivalent to [`upcast::<Object>()`][Self::upcast], but without bounds.
+    // Not yet public because it might need _mut/_ref overloads, and 6 upcast methods are a bit much...
+    pub(crate) fn upcast_object(self) -> Gd<classes::Object> {
+        self.owned_cast()
+            .expect("Upcast to Object failed. This is a bug; please report it.")
     }
 
     /// **Upcast shared-ref:** access this object as a shared reference to a base class.
@@ -384,7 +411,7 @@ impl<T: GodotClass> Gd<T> {
     /// object for further casts.
     pub fn try_cast<Derived>(self) -> Result<Gd<Derived>, Self>
     where
-        Derived: GodotClass + Inherits<T>,
+        Derived: Inherits<T>,
     {
         // Separate method due to more restrictive bounds.
         self.owned_cast()
@@ -396,7 +423,7 @@ impl<T: GodotClass> Gd<T> {
     /// If the class' dynamic type is not `Derived` or one of its subclasses. Use [`Self::try_cast()`] if you want to check the result.
     pub fn cast<Derived>(self) -> Gd<Derived>
     where
-        Derived: GodotClass + Inherits<T>,
+        Derived: Inherits<T>,
     {
         self.owned_cast().unwrap_or_else(|from_obj| {
             panic!(
@@ -407,8 +434,9 @@ impl<T: GodotClass> Gd<T> {
         })
     }
 
-    /// Returns `Ok(cast_obj)` on success, `Err(self)` on error
-    fn owned_cast<U>(self) -> Result<Gd<U>, Self>
+    /// Returns `Ok(cast_obj)` on success, `Err(self)` on error.
+    // Visibility: used by DynGd.
+    pub(crate) fn owned_cast<U>(self) -> Result<Gd<U>, Self>
     where
         U: GodotClass,
     {
@@ -429,6 +457,19 @@ impl<T: GodotClass> Gd<T> {
             let object_ptr = callbacks::create::<T>(std::ptr::null_mut());
             Gd::from_obj_sys(object_ptr)
         }
+    }
+
+    /// Upgrades to a `DynGd<T, D>` pointer, enabling the `D` abstraction.
+    ///
+    /// The `D` parameter can typically be inferred when there is a single `AsDyn<...>` implementation for `T`.  \
+    /// Otherwise, use it as `gd.into_dyn::<dyn MyTrait>()`.
+    #[must_use]
+    pub fn into_dyn<D>(self) -> DynGd<T, D>
+    where
+        T: crate::obj::AsDyn<D> + Bounds<Declarer = bounds::DeclUser>,
+        D: ?Sized,
+    {
+        DynGd::<T, D>::from_gd(self)
     }
 
     /// Returns a callable referencing a method from this object named `method_name`.
@@ -679,6 +720,7 @@ impl<T: GodotClass> GodotConvert for Gd<T> {
 }
 
 impl<T: GodotClass> ToGodot for Gd<T> {
+    // TODO return RefArg here?
     type ToVia<'v> = Gd<T>;
 
     fn to_godot(&self) -> Self::ToVia<'_> {
@@ -693,16 +735,22 @@ impl<T: GodotClass> FromGodot for Gd<T> {
     }
 }
 
+// Keep in sync with DynGd.
 impl<T: GodotClass> GodotType for Gd<T> {
+    // Some #[doc(hidden)] are repeated despite already declared in trait; some IDEs suggest in auto-complete otherwise.
     type Ffi = RawGd<T>;
 
-    type ToFfi<'f> = RefArg<'f, RawGd<T>>
-    where Self: 'f;
+    type ToFfi<'f>
+        = RefArg<'f, RawGd<T>>
+    where
+        Self: 'f;
 
+    #[doc(hidden)]
     fn to_ffi(&self) -> Self::ToFfi<'_> {
         RefArg::new(&self.raw)
     }
 
+    #[doc(hidden)]
     fn into_ffi(self) -> Self::Ffi {
         self.raw
     }
@@ -715,7 +763,7 @@ impl<T: GodotClass> GodotType for Gd<T> {
         }
     }
 
-    fn class_name() -> crate::meta::ClassName {
+    fn class_name() -> ClassName {
         T::class_name()
     }
 
@@ -773,6 +821,7 @@ impl<T: GodotClass> ArrayElement for Option<Gd<T>> {
 }
 
 impl<'r, T: GodotClass> AsArg<Gd<T>> for &'r Gd<T> {
+    #[doc(hidden)] // Repeated despite already hidden in trait; some IDEs suggest this otherwise.
     fn into_arg<'cow>(self) -> CowArg<'cow, Gd<T>>
     where
         'r: 'cow, // Original reference must be valid for at least as long as the returned cow.
@@ -793,7 +842,7 @@ impl<T: GodotClass> ParamType for Gd<T> {
     }
 }
 
-impl<'r, T: GodotClass> AsArg<Option<Gd<T>>> for Option<&'r Gd<T>> {
+impl<T: GodotClass> AsArg<Option<Gd<T>>> for Option<&Gd<T>> {
     fn into_arg<'cow>(self) -> CowArg<'cow, Option<Gd<T>>> {
         // TODO avoid cloning.
         match self {

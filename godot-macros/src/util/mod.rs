@@ -212,7 +212,7 @@ fn validate_self(original_impl: &venial::Impl, attr: &str) -> ParseResult<Ident>
 }
 
 /// Gets the right-most type name in the path.
-fn extract_typename(ty: &venial::TypeExpr) -> Option<venial::PathSegment> {
+pub(crate) fn extract_typename(ty: &venial::TypeExpr) -> Option<venial::PathSegment> {
     match ty.as_path() {
         Some(mut path) => path.segments.pop(),
         _ => None,
@@ -287,4 +287,22 @@ pub fn safe_ident(s: &str) -> Ident {
 
          _ => ident(s)
     }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// Parses a `meta` TokenStream, that is, the tokens in parameter position of a proc-macro (between the braces).
+/// Because venial can't actually parse a meta item directly, this is done by reconstructing the full macro attribute on top of some content and then parsing *that*.
+pub fn venial_parse_meta(
+    meta: &TokenStream,
+    self_name: Ident,
+    content: &TokenStream,
+) -> Result<venial::Item, venial::Error> {
+    // Hack because venial doesn't support direct meta parsing yet
+    let input = quote! {
+        #[#self_name(#meta)]
+        #content
+    };
+
+    venial::parse_item(input)
 }
