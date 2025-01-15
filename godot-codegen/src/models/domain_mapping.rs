@@ -357,7 +357,7 @@ impl BuiltinMethod {
                 parameters: FnParam::new_range_no_defaults(&method.arguments, ctx),
                 return_value: FnReturn::new(&return_value, ctx),
                 is_vararg: method.is_vararg,
-                is_private: special_cases::is_method_private(builtin_name, &method.name),
+                is_private: false, // See 'exposed' below. Could be special_cases::is_method_private(builtin_name, &method.name),
                 is_virtual_required: false,
                 direction: FnDirection::Outbound {
                     hash: method.hash.expect("hash absent for builtin method"),
@@ -365,6 +365,10 @@ impl BuiltinMethod {
             },
             qualifier: FnQualifier::from_const_static(method.is_const, method.is_static),
             surrounding_class: inner_class_name.clone(),
+            is_exposed_in_outer: special_cases::is_builtin_method_exposed(
+                builtin_name,
+                &method.name,
+            ),
         })
     }
 }
@@ -415,20 +419,31 @@ impl ClassMethod {
         ctx: &mut Context,
     ) -> Option<Self> {
         assert!(method.is_virtual);
-        assert!(
-            method.hash.is_none(),
-            "hash present for virtual class method"
-        );
 
-        let rust_method_name = Self::make_virtual_method_name(&method.name);
+        // Hash for virtual methods is available from Godot 4.4, see https://github.com/godotengine/godot/pull/100674.
+        let direction = FnDirection::Virtual {
+            #[cfg(since_api = "4.4")]
+            hash: {
+                let hash_i64 = method.hash.unwrap_or_else(|| {
+                    panic!(
+                        "virtual class methods must have a hash since Godot 4.4; missing: {}.{}",
+                        class_name.godot_ty, method.name
+                    )
+                });
 
-        Self::from_json_inner(
-            method,
-            rust_method_name,
-            class_name,
-            FnDirection::Virtual,
-            ctx,
-        )
+                // TODO see if we can use u32 everywhere.
+                hash_i64.try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "virtual method {}.{} has hash {} that is out of range for u32",
+                        class_name.godot_ty, method.name, hash_i64
+                    )
+                })
+            },
+        };
+
+        let rust_method_name = Self::make_virtual_method_name(class_name, &method.name);
+
+        Self::from_json_inner(method, rust_method_name, class_name, direction, ctx)
     }
 
     fn from_json_inner(
@@ -488,13 +503,13 @@ impl ClassMethod {
         })
     }
 
-    fn make_virtual_method_name(godot_method_name: &str) -> &str {
+    fn make_virtual_method_name<'m>(class_name: &TyName, godot_method_name: &'m str) -> &'m str {
         // Remove leading underscore from virtual method names.
         let method_name = godot_method_name
             .strip_prefix('_')
             .unwrap_or(godot_method_name);
 
-        special_cases::maybe_rename_virtual_method(method_name)
+        special_cases::maybe_rename_virtual_method(class_name, method_name)
     }
 }
 

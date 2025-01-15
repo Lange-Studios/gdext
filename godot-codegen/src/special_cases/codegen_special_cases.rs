@@ -14,9 +14,14 @@ use crate::models::json::{JsonBuiltinMethod, JsonClassMethod, JsonUtilityFunctio
 use crate::special_cases;
 
 pub(crate) fn is_builtin_method_excluded(method: &JsonBuiltinMethod) -> bool {
-    // TODO Fall back to varcall (recent addition in GDExtension API).
-    // See https://github.com/godot-rust/gdext/issues/382.
-    method.is_vararg
+    // The `cfg` below becomes `false` for api > 4.1 so clippy would complain it's always false.
+    #[allow(clippy::needless_bool)]
+    if method.is_vararg {
+        // Support for calling varargs using gdextension were added in 4.2.
+        cfg!(before_api = "4.2")
+    } else {
+        false
+    }
 }
 
 #[cfg(not(feature = "codegen-full"))]
@@ -69,14 +74,16 @@ pub(crate) fn is_class_method_excluded(method: &JsonClassMethod, ctx: &mut Conte
     };
 
     // Exclude if return type contains an excluded type.
-    if method.return_value.as_ref().map_or(false, |ret| {
-        is_arg_or_return_excluded(ret.type_.as_str(), ctx)
-    }) {
+    if method
+        .return_value
+        .as_ref()
+        .is_some_and(|ret| is_arg_or_return_excluded(ret.type_.as_str(), ctx))
+    {
         return true;
     }
 
     // Exclude if any argument contains an excluded type.
-    if method.arguments.as_ref().map_or(false, |args| {
+    if method.arguments.as_ref().is_some_and(|args| {
         args.iter()
             .any(|arg| is_arg_or_return_excluded(arg.type_.as_str(), ctx))
     }) {
@@ -102,8 +109,8 @@ pub(crate) fn is_utility_function_excluded(
     function
         .return_type
         .as_ref()
-        .map_or(false, |ret| is_type_excluded(ret.as_str(), ctx))
-        || function.arguments.as_ref().map_or(false, |args| {
+        .is_some_and(|ret| is_type_excluded(ret.as_str(), ctx))
+        || function.arguments.as_ref().is_some_and(|args| {
             args.iter()
                 .any(|arg| is_type_excluded(arg.type_.as_str(), ctx))
         })

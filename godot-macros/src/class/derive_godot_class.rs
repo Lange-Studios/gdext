@@ -16,9 +16,19 @@ use crate::util::{bail, error, ident, path_ends_with_complex, require_api_versio
 use crate::{handle_mutually_exclusive_keys, util, ParseResult};
 
 pub fn derive_godot_class(item: venial::Item) -> ParseResult<TokenStream> {
-    let class = item
-        .as_struct()
-        .ok_or_else(|| venial::Error::new("Not a valid struct"))?;
+    let class = item.as_struct().ok_or_else(|| {
+        util::error_fn(
+            "#[derive(GodotClass)] is only allowed on structs",
+            item.name(),
+        )
+    })?;
+
+    if class.generic_params.is_some() {
+        return bail!(
+            &class.generic_params,
+            "#[derive(GodotClass)] does not support lifetimes or generic parameters",
+        );
+    }
 
     let named_fields = named_fields(class)?;
     let mut struct_cfg = parse_struct_attributes(class)?;
@@ -298,13 +308,29 @@ fn make_user_class_impl(
         let tool_check = util::make_virtual_tool_check();
         let signature_info = SignatureInfo::fn_ready();
 
-        let callback = make_virtual_callback(class_name, signature_info, BeforeKind::OnlyBefore);
+        let callback = make_virtual_callback(class_name, &signature_info, BeforeKind::OnlyBefore);
+
+        // See also __virtual_call() codegen.
+        // This doesn't explicitly check if the base class inherits from Node (and thus has `_ready`), but the derive-macro already does
+        // this for the `OnReady` field declaration.
+        let (hash_param, hash_check);
+        if cfg!(since_api = "4.4") {
+            hash_param = quote! { hash: u32, };
+            hash_check = quote! { && hash == ::godot::sys::known_virtual_hashes::Node::ready };
+        } else {
+            hash_param = TokenStream::new();
+            hash_check = TokenStream::new();
+        }
+
         let default_virtual_fn = quote! {
-            fn __default_virtual_call(name: &str) -> ::godot::sys::GDExtensionClassCallVirtual {
+            fn __default_virtual_call(
+                name: &str,
+                #hash_param
+            ) -> ::godot::sys::GDExtensionClassCallVirtual {
                 use ::godot::obj::UserClass as _;
                 #tool_check
 
-                if name == "_ready" {
+                if name == "_ready" #hash_check {
                     #callback
                 } else {
                     None
@@ -410,13 +436,16 @@ fn parse_struct_attributes(class: &venial::Struct) -> ParseResult<ClassAttribute
 ///
 /// Errors if `class` is a tuple struct.
 fn named_fields(class: &venial::Struct) -> ParseResult<Vec<(venial::NamedField, Punct)>> {
-    // This is separate from parse_fields to improve compile errors.  The errors from here demand larger and more non-local changes from the API
+    // This is separate from parse_fields to improve compile errors. The errors from here demand larger and more non-local changes from the API
     // user than those from parse_struct_attributes, so this must be run first.
     match &class.fields {
+        // TODO disallow unit structs in the future
+        // It often happens that over time, a registered class starts to require a base field.
+        // Extending a {} struct requires breaking less code, so we should encourage it from the start.
         venial::Fields::Unit => Ok(vec![]),
         venial::Fields::Tuple(_) => bail!(
             &class.fields,
-            "#[derive(GodotClass)] not supported for tuple structs",
+            "#[derive(GodotClass)] is not supported for tuple structs",
         )?,
         venial::Fields::Named(fields) => Ok(fields.fields.inner.clone()),
     }

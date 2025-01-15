@@ -62,6 +62,16 @@ pub fn is_class_method_deleted(class_name: &TyName, method: &JsonClassMethod, ct
         | ("VisualShaderNodeComment", "set_description")
         | ("VisualShaderNodeComment", "get_description")
         => true,
+        
+        // Workaround for methods unexposed in Release mode, see https://github.com/godotengine/godot/pull/100317
+        // and https://github.com/godotengine/godot/pull/100328.
+        #[cfg(not(debug_assertions))]
+        | ("CollisionShape2D", "set_debug_color")
+        | ("CollisionShape2D", "get_debug_color")
+        | ("CollisionShape3D", "set_debug_color")
+        | ("CollisionShape3D", "get_debug_color")
+        | ("CollisionShape3D", "set_debug_fill_enabled")
+        | ("CollisionShape3D", "get_debug_fill_enabled") => true,
 
         // Thread APIs
         #[cfg(not(feature = "experimental-threads"))]
@@ -212,6 +222,9 @@ pub fn is_named_accessor_in_table(class_or_builtin_ty: &TyName, godot_method_nam
 }
 
 /// Whether a class or builtin method should be hidden from the public API.
+///
+/// Builtin class methods are all private by default, due to being declared in an `Inner*` struct. A separate mechanism is used
+/// to make them public, see [`is_builtin_method_exposed`].
 #[rustfmt::skip]
 pub fn is_method_private(class_or_builtin_ty: &TyName, godot_method_name: &str) -> bool {
     match (class_or_builtin_ty.godot_ty.as_str(), godot_method_name) {
@@ -221,6 +234,196 @@ pub fn is_method_private(class_or_builtin_ty: &TyName, godot_method_name: &str) 
         | ("RefCounted", "reference")
         | ("RefCounted", "unreference")
         | ("Object", "notification")
+
+        => true, _ => false
+    }
+}
+
+#[rustfmt::skip]
+pub fn is_builtin_method_exposed(builtin_ty: &TyName, godot_method_name: &str) -> bool {
+    match (builtin_ty.godot_ty.as_str(), godot_method_name) {
+        // GString
+        | ("String", "begins_with")
+        | ("String", "ends_with")
+        | ("String", "is_subsequence_of")
+        | ("String", "is_subsequence_ofn")
+        | ("String", "bigrams")
+        | ("String", "similarity")
+        | ("String", "replace")
+        | ("String", "replacen")
+        | ("String", "repeat")
+        | ("String", "reverse")
+        | ("String", "capitalize")
+        | ("String", "to_camel_case")
+        | ("String", "to_pascal_case")
+        | ("String", "to_snake_case")
+        | ("String", "split_floats")
+        | ("String", "join")
+        | ("String", "to_upper")
+        | ("String", "to_lower")
+        | ("String", "left")
+        | ("String", "right")
+        | ("String", "strip_edges")
+        | ("String", "strip_escapes")
+        | ("String", "lstrip")
+        | ("String", "rstrip")
+        | ("String", "get_extension")
+        | ("String", "get_basename")
+        | ("String", "path_join")
+        | ("String", "indent")
+        | ("String", "dedent")
+        | ("String", "md5_text")
+        | ("String", "sha1_text")
+        | ("String", "sha256_text")
+        | ("String", "md5_buffer")
+        | ("String", "sha1_buffer")
+        | ("String", "sha256_buffer")
+        | ("String", "is_empty")
+        | ("String", "contains")
+        | ("String", "containsn")
+        | ("String", "is_absolute_path")
+        | ("String", "is_relative_path")
+        | ("String", "simplify_path")
+        | ("String", "get_base_dir")
+        | ("String", "get_file")
+        | ("String", "xml_escape")
+        | ("String", "xml_unescape")
+        | ("String", "uri_encode")
+        | ("String", "uri_decode")
+        | ("String", "c_escape")
+        | ("String", "c_unescape")
+        | ("String", "json_escape")
+        | ("String", "validate_node_name")
+        | ("String", "validate_filename")
+        | ("String", "is_valid_identifier")
+        | ("String", "is_valid_int")
+        | ("String", "is_valid_float")
+        | ("String", "is_valid_hex_number")
+        | ("String", "is_valid_html_color")
+        | ("String", "is_valid_ip_address")
+        | ("String", "is_valid_filename")
+        | ("String", "to_int")
+        | ("String", "to_float")
+        | ("String", "hex_to_int")
+        | ("String", "bin_to_int")
+        | ("String", "trim_prefix")
+        | ("String", "trim_suffix")
+        | ("String", "to_ascii_buffer")
+        | ("String", "to_utf8_buffer")
+        | ("String", "to_utf16_buffer")
+        | ("String", "to_utf32_buffer")
+        | ("String", "hex_decode")
+        | ("String", "to_wchar_buffer")
+        | ("String", "num_scientific")
+        | ("String", "num")
+        | ("String", "num_int64")
+        | ("String", "num_uint64")
+        | ("String", "chr")
+        | ("String", "humanize_size")
+
+        // StringName
+        | ("StringName", "begins_with")
+        | ("StringName", "ends_with")
+        | ("StringName", "is_subsequence_of")
+        | ("StringName", "is_subsequence_ofn")
+        | ("StringName", "bigrams")
+        | ("StringName", "similarity")
+        | ("StringName", "replace")
+        | ("StringName", "replacen")
+        | ("StringName", "repeat")
+        | ("StringName", "reverse")
+        | ("StringName", "capitalize")
+        | ("StringName", "to_camel_case")
+        | ("StringName", "to_pascal_case")
+        | ("StringName", "to_snake_case")
+        | ("StringName", "split_floats")
+        | ("StringName", "join")
+        | ("StringName", "to_upper")
+        | ("StringName", "to_lower")
+        | ("StringName", "left")
+        | ("StringName", "right")
+        | ("StringName", "strip_edges")
+        | ("StringName", "strip_escapes")
+        | ("StringName", "lstrip")
+        | ("StringName", "rstrip")
+        | ("StringName", "get_extension")
+        | ("StringName", "get_basename")
+        | ("StringName", "path_join")
+        | ("StringName", "indent")
+        | ("StringName", "dedent")
+        | ("StringName", "md5_text")
+        | ("StringName", "sha1_text")
+        | ("StringName", "sha256_text")
+        | ("StringName", "md5_buffer")
+        | ("StringName", "sha1_buffer")
+        | ("StringName", "sha256_buffer")
+        | ("StringName", "is_empty")
+        | ("StringName", "contains")
+        | ("StringName", "containsn")
+        | ("StringName", "is_absolute_path")
+        | ("StringName", "is_relative_path")
+        | ("StringName", "simplify_path")
+        | ("StringName", "get_base_dir")
+        | ("StringName", "get_file")
+        | ("StringName", "xml_escape")
+        | ("StringName", "xml_unescape")
+        | ("StringName", "uri_encode")
+        | ("StringName", "uri_decode")
+        | ("StringName", "c_escape")
+        | ("StringName", "c_unescape")
+        | ("StringName", "json_escape")
+        | ("StringName", "validate_node_name")
+        | ("StringName", "validate_filename")
+        | ("StringName", "is_valid_identifier")
+        | ("StringName", "is_valid_int")
+        | ("StringName", "is_valid_float")
+        | ("StringName", "is_valid_hex_number")
+        | ("StringName", "is_valid_html_color")
+        | ("StringName", "is_valid_ip_address")
+        | ("StringName", "is_valid_filename")
+        | ("StringName", "to_int")
+        | ("StringName", "to_float")
+        | ("StringName", "hex_to_int")
+        | ("StringName", "bin_to_int")
+        | ("StringName", "trim_prefix")
+        | ("StringName", "trim_suffix")
+        | ("StringName", "to_ascii_buffer")
+        | ("StringName", "to_utf8_buffer")
+        | ("StringName", "to_utf16_buffer")
+        | ("StringName", "to_utf32_buffer")
+        | ("StringName", "hex_decode")
+        | ("StringName", "to_wchar_buffer")
+
+        // NodePath
+        | ("NodePath", "is_absolute")
+        | ("NodePath", "is_empty")
+        | ("NodePath", "get_concatenated_names")
+        | ("NodePath", "get_concatenated_subnames")
+        | ("NodePath", "get_as_property_path")
+
+        // Callable
+        | ("Callable", "call")
+        | ("Callable", "call_deferred")
+        | ("Callable", "bind")
+        | ("Callable", "get_bound_arguments")
+        | ("Callable", "rpc")
+        | ("Callable", "rpc_id")
+
+        // PackedByteArray
+        | ("PackedByteArray", "get_string_from_ascii")
+        | ("PackedByteArray", "get_string_from_utf8")
+        | ("PackedByteArray", "get_string_from_utf16")
+        | ("PackedByteArray", "get_string_from_utf32")
+        | ("PackedByteArray", "get_string_from_wchar")
+        | ("PackedByteArray", "hex_encode")
+
+        // Vector2i
+        | ("Vector2i", "clampi")
+        | ("Vector2i", "distance_squared_to")
+        | ("Vector2i", "distance_to")
+        | ("Vector2i", "maxi")
+        | ("Vector2i", "mini")
+        | ("Vector2i", "snappedi")
 
         => true, _ => false
     }
@@ -322,7 +525,6 @@ pub fn is_class_method_param_required(
 
 /// True if builtin method is excluded. Does NOT check for type exclusion; use [`is_builtin_type_deleted`] for that.
 pub fn is_builtin_method_deleted(_class_name: &TyName, method: &JsonBuiltinMethod) -> bool {
-    // Currently only deleted if codegen.
     codegen_special_cases::is_builtin_method_excluded(method)
 }
 
@@ -349,19 +551,26 @@ pub fn is_utility_function_deleted(function: &JsonUtilityFunction, ctx: &mut Con
 }
 
 pub fn maybe_rename_class_method<'m>(class_name: &TyName, godot_method_name: &'m str) -> &'m str {
+    // This is for non-virtual methods only. For virtual methods, use other handler below.
+
     match (class_name.godot_ty.as_str(), godot_method_name) {
         // GDScript, GDScriptNativeClass, possibly more in the future
         (_, "new") => "instantiate",
+
         _ => godot_method_name,
     }
 }
 
 // Maybe merge with above?
-pub fn maybe_rename_virtual_method(rust_method_name: &str) -> &str {
-    // A few classes define a virtual method called "_init" (distinct from the constructor)
-    // -> rename those to avoid a name conflict in I* interface trait.
-    match rust_method_name {
-        "init" => "init_ext",
+pub fn maybe_rename_virtual_method<'m>(class_name: &TyName, rust_method_name: &'m str) -> &'m str {
+    match (class_name.godot_ty.as_str(), rust_method_name) {
+        // Workaround for 2 methods of same name; see https://github.com/godotengine/godot/pull/99181#issuecomment-2543311415.
+        ("AnimationNodeExtension", "process") => "process_animation",
+
+        // A few classes define a virtual method called "_init" (distinct from the constructor)
+        // -> rename those to avoid a name conflict in I* interface trait.
+        (_, "init") => "init_ext",
+
         _ => rust_method_name,
     }
 }

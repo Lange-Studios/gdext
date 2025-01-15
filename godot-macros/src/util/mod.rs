@@ -141,7 +141,7 @@ fn delimiter_opening_char(delimiter: Delimiter) -> char {
 /// declaration of the form `impl MyTrait for SomeType`. The type `SomeType` is irrelevant in this example.
 pub(crate) fn is_impl_named(original_impl: &venial::Impl, name: &str) -> bool {
     let trait_name = original_impl.trait_ty.as_ref().unwrap(); // unwrap: already checked outside
-    extract_typename(trait_name).map_or(false, |seg| seg.ident == name)
+    extract_typename(trait_name).is_some_and(|seg| seg.ident == name)
 }
 
 /// Validates either:
@@ -166,30 +166,31 @@ pub(crate) fn validate_impl(
     validate_self(original_impl, attr)
 }
 
-/// Validates that the declaration is the of the form `impl Trait for SomeType`, where the name
-/// of `Trait` begins with `I`.
+/// Validates that the declaration is the of the form `impl Trait for SomeType`, where the name of `Trait` begins with `I`.
+///
+/// Returns `(class_name, trait_path, trait_base_class)`, e.g. `(MyClass, godot::prelude::INode3D, Node3D)`.
 pub(crate) fn validate_trait_impl_virtual<'a>(
     original_impl: &'a venial::Impl,
     attr: &str,
-) -> ParseResult<(Ident, &'a venial::TypeExpr)> {
+) -> ParseResult<(Ident, &'a venial::TypeExpr, Ident)> {
     let trait_name = original_impl.trait_ty.as_ref().unwrap(); // unwrap: already checked outside
     let typename = extract_typename(trait_name);
 
     // Validate trait
-    if !typename
+    let Some(base_class) = typename
         .as_ref()
-        .map_or(false, |seg| seg.ident.to_string().starts_with('I'))
-    {
+        .and_then(|seg| seg.ident.to_string().strip_prefix('I').map(ident))
+    else {
         return bail!(
             original_impl,
             "#[{attr}] for trait impls requires a virtual method trait (trait name should start with 'I')",
         );
-    }
+    };
 
     // Validate self
     validate_self(original_impl, attr).map(|class_name| {
         // let trait_name = typename.unwrap(); // unwrap: already checked in 'Validate trait'
-        (class_name, trait_name)
+        (class_name, trait_name, base_class)
     })
 }
 
@@ -227,19 +228,15 @@ pub(crate) fn path_is_single(path: &[TokenTree], expected: &str) -> bool {
 
 pub(crate) fn path_ends_with(path: &[TokenTree], expected: &str) -> bool {
     // Could also use TypeExpr::as_path(), or fn below this one.
-    path.last()
-        .map(|last| last.to_string() == expected)
-        .unwrap_or(false)
+    path.last().is_some_and(|last| last.to_string() == expected)
 }
 
 pub(crate) fn path_ends_with_complex(path: &venial::TypeExpr, expected: &str) -> bool {
-    path.as_path()
-        .map(|path| {
-            path.segments
-                .last()
-                .map_or(false, |seg| seg.ident == expected)
-        })
-        .unwrap_or(false)
+    path.as_path().is_some_and(|path| {
+        path.segments
+            .last()
+            .is_some_and(|seg| seg.ident == expected)
+    })
 }
 
 pub(crate) fn extract_cfg_attrs(
@@ -247,7 +244,7 @@ pub(crate) fn extract_cfg_attrs(
 ) -> impl IntoIterator<Item = &venial::Attribute> {
     attrs.iter().filter(|attr| {
         attr.get_single_path_segment()
-            .map_or(false, |name| name == "cfg")
+            .is_some_and(|name| name == "cfg")
     })
 }
 
